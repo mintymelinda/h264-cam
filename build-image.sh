@@ -7,7 +7,7 @@ RASPIOS_IMAGE_URL="${PETCAM_RASPIOS_IMAGE_URL:-https://downloads.raspberrypi.com
 VERSION="${PETCAM_VERSION:-development}"
 SOURCE_COMMIT="${PETCAM_SOURCE_COMMIT:-}"
 SOURCE_REF="${PETCAM_SOURCE_REF:-$VERSION}"
-SOURCE_REPOSITORY="https://github.com/mintymelinda/h264-cam.git"
+SOURCE_REPOSITORY="${PETCAM_SOURCE_REPOSITORY:-https://github.com/mintymelinda/h264-cam.git}"
 
 log() { printf '[petcam-image] %s\n' "$*"; }
 fail() { printf '[petcam-image] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -131,7 +131,7 @@ if [[ -n "$CHROOT_EMULATOR" ]]; then
 fi
 
 log "Installing Git in the image, cloning the exact release tag, and running its top-level installer."
-run_chroot env SOURCE_COMMIT="$SOURCE_COMMIT" SOURCE_REF="$SOURCE_REF" SOURCE_REPOSITORY="$SOURCE_REPOSITORY" /bin/bash -e -c '
+run_chroot /usr/bin/env SOURCE_COMMIT="$SOURCE_COMMIT" SOURCE_REF="$SOURCE_REF" SOURCE_REPOSITORY="$SOURCE_REPOSITORY" /bin/bash -e -c '
   test "$(dpkg --print-architecture)" = armhf
   test "$(getconf LONG_BIT)" = 32
   . /etc/os-release
@@ -159,9 +159,6 @@ if (( RESOLV_REPLACED )); then
   if [[ -n "$RESOLV_LINK" ]]; then ln -s "$RESOLV_LINK" "$ROOTFS/etc/resolv.conf"; elif (( RESOLV_WAS_REGULAR )); then cp -a "$RESOLV_BACKUP" "$ROOTFS/etc/resolv.conf"; fi
   RESOLV_REPLACED=0
 fi
-log "Cleaning package caches and temporary installer files."
-run_chroot /bin/bash -e -c 'apt-get clean; rm -rf /var/lib/apt/lists/*'
-
 log "Cleaning package caches and verifying the installed application in the final root filesystem."
 run_chroot /bin/bash -e -c '
   apt-get clean
