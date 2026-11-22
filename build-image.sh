@@ -5,16 +5,15 @@ REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_DIR="${1:-$REPO_ROOT/dist/image}"
 RASPIOS_IMAGE_URL="${PETCAM_RASPIOS_IMAGE_URL:-https://downloads.raspberrypi.com/raspios_lite_armhf_latest}"
 VERSION="${PETCAM_VERSION:-development}"
-SOURCE_COMMIT="${PETCAM_SOURCE_COMMIT:-unknown}"
+SOURCE_COMMIT="${PETCAM_SOURCE_COMMIT:-}"
+SOURCE_REF="${PETCAM_SOURCE_REF:-$VERSION}"
+SOURCE_REPOSITORY="https://github.com/mintymelinda/h264-cam.git"
 
 log() { printf '[petcam-image] %s\n' "$*"; }
 fail() { printf '[petcam-image] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [[ "$EUID" -eq 0 ]] || fail "Run this image customizer as root (for example: sudo $0 ...)."
-[[ -s "$REPO_ROOT/install.sh" && -s "$REPO_ROOT/requirements.apt" && -s "$REPO_ROOT/requirements.txt" && -s "$REPO_ROOT/src/petcam/cli.py" ]] || fail "Run this script from a complete PetCam source checkout; required installer and application files must be non-empty."
-bash -n "$REPO_ROOT/install.sh" || fail "The source installer has invalid shell syntax."
-[[ -s "$REPO_ROOT/petcam" && -x "$REPO_ROOT/petcam" ]] || fail "The source PetCam launcher is missing, empty, or not executable."
-[[ -s "$REPO_ROOT/scripts/smoke-test-installed-launcher.py" && -s "$REPO_ROOT/scripts/smoke-test-installed-help.py" ]] || fail "Required installed-launcher smoke tests are missing or empty."
+
 for tool in curl xz losetup mount umount blkid chroot sha256sum; do
   command -v "$tool" >/dev/null 2>&1 || fail "Required host tool is missing: $tool"
 done
@@ -37,7 +36,8 @@ run_chroot() {
 }
 
 [[ "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || fail "Invalid image version."
-[[ "$SOURCE_COMMIT" == "unknown" || "$SOURCE_COMMIT" =~ ^[a-fA-F0-9]{40}$ ]] || fail "Source commit must be a full 40-character Git SHA."
+[[ "$SOURCE_COMMIT" =~ ^[a-fA-F0-9]{40}$ ]] || fail "PETCAM_SOURCE_COMMIT must be the full 40-character release commit SHA."
+[[ -n "$SOURCE_REF" && "$SOURCE_REF" != -* ]] || fail "PETCAM_SOURCE_REF must be a Git branch or tag."
 
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
@@ -126,46 +126,33 @@ mkdir -p "$ROOTFS/run"
 mount --rbind /run "$ROOTFS/run"
 mount --make-rslave "$ROOTFS/run"
 
-log "Installing PetCam into the existing Raspberry Pi OS root filesystem."
 if [[ -n "$CHROOT_EMULATOR" ]]; then
   install -D -m 0755 "$CHROOT_EMULATOR" "$ROOTFS/usr/bin/qemu-arm-static"
 fi
-mkdir -p "$ROOTFS/tmp/petcam-installer"
-cp -a "$REPO_ROOT/install.sh" "$REPO_ROOT/requirements.apt" "$REPO_ROOT/requirements.txt" "$REPO_ROOT/petcam" "$REPO_ROOT/src" "$REPO_ROOT/scripts" "$ROOTFS/tmp/petcam-installer/"
-run_chroot /bin/bash -e -c '
+
+log "Installing Git in the image, cloning the exact release tag, and running its top-level installer."
+run_chroot env SOURCE_COMMIT="$SOURCE_COMMIT" SOURCE_REF="$SOURCE_REF" SOURCE_REPOSITORY="$SOURCE_REPOSITORY" /bin/bash -e -c '
   test "$(dpkg --print-architecture)" = armhf
   test "$(getconf LONG_BIT)" = 32
   . /etc/os-release
   test "$VERSION_CODENAME" = trixie
-  test -s /tmp/petcam-installer/install.sh
-  bash -n /tmp/petcam-installer/install.sh
-  /tmp/petcam-installer/install.sh
-' || fail "PetCam installation in the Raspberry Pi OS Trixie image failed."
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git sudo ca-certificates
+  rm -rf /tmp/petcam-source
+  GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "$SOURCE_REF" --single-branch "$SOURCE_REPOSITORY" /tmp/petcam-source
+  actual_commit="$(git -C /tmp/petcam-source rev-parse HEAD)"
+  test "$actual_commit" = "$SOURCE_COMMIT"
+  cd /tmp/petcam-source
+  sudo ./install.sh
+' || fail "The real Git clone and top-level install.sh process failed inside the Raspberry Pi OS Trixie ARMHF environment."
 
-log "Preserving the complete recovery installer on the image."
-install -d -m 0755 "$ROOTFS/opt/petcam/installer"
-cp -a "$ROOTFS/tmp/petcam-installer/." "$ROOTFS/opt/petcam/installer/"
-cmp -s "$REPO_ROOT/install.sh" "$ROOTFS/opt/petcam/installer/install.sh" || fail "The retained recovery installer differs from the source installer."
-[[ -s "$ROOTFS/opt/petcam/installer/install.sh" ]] || fail "The retained recovery installer is empty."
-cat > "$ROOTFS/opt/petcam/install.sh" <<'PETCAM_INSTALL_WRAPPER'
-#!/bin/sh
-set -eu
-exec /opt/petcam/installer/install.sh "$@"
-PETCAM_INSTALL_WRAPPER
-chmod 0755 "$ROOTFS/opt/petcam/install.sh"
-EXPECTED_WRAPPER="$BUILD_ROOT/expected-recovery-wrapper"
-cat > "$EXPECTED_WRAPPER" <<'PETCAM_INSTALL_WRAPPER'
-#!/bin/sh
-set -eu
-exec /opt/petcam/installer/install.sh "$@"
-PETCAM_INSTALL_WRAPPER
-cmp -s "$EXPECTED_WRAPPER" "$ROOTFS/opt/petcam/install.sh" || fail "The on-device recovery wrapper contents are incorrect."
-rm -rf "$ROOTFS/tmp/petcam-installer"
-
-INSTALLER_SHA256="$(sha256sum "$REPO_ROOT/install.sh" | awk '{print $1}')"
+INSTALLER_SHA256="$(sha256sum "$ROOTFS/tmp/petcam-source/install.sh" | awk '{print $1}')"
+[[ "$INSTALLER_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || fail "Could not calculate the cloned install.sh checksum."
+log "Recording exact build provenance and removing the temporary source checkout."
 install -d -m 0755 "$ROOTFS/opt/petcam"
 printf 'PETCAM_VERSION=%s\nSOURCE_COMMIT=%s\nINSTALLER_SHA256=%s\n' "$VERSION" "$SOURCE_COMMIT" "$INSTALLER_SHA256" > "$ROOTFS/opt/petcam/build-info"
 chmod 0644 "$ROOTFS/opt/petcam/build-info"
+rm -rf "$ROOTFS/tmp/petcam-source"
 
 if (( RESOLV_REPLACED )); then
   rm -f "$ROOTFS/etc/resolv.conf"
@@ -175,31 +162,17 @@ fi
 log "Cleaning package caches and temporary installer files."
 run_chroot /bin/bash -e -c 'apt-get clean; rm -rf /var/lib/apt/lists/*'
 
-log "Verifying the final root filesystem after installer staging and cleanup."
-run_chroot env EXPECTED_VERSION="$VERSION" EXPECTED_SOURCE_COMMIT="$SOURCE_COMMIT" EXPECTED_INSTALLER_SHA256="$INSTALLER_SHA256" /bin/bash -e -c '
-  test -s /opt/petcam/install.sh
-  test -x /opt/petcam/install.sh
-  test -s /opt/petcam/installer/install.sh
-  test -x /opt/petcam/installer/install.sh
-  bash -n /opt/petcam/install.sh
-  bash -n /opt/petcam/installer/install.sh
-  test -s /opt/petcam/installer/requirements.apt
-  test -s /opt/petcam/installer/requirements.txt
-  test -x /opt/petcam/installer/petcam
-  test -s /opt/petcam/installer/src/petcam/cli.py
-  test -s /opt/petcam/installer/scripts/smoke-test-installed-launcher.py
-  test -s /opt/petcam/installer/scripts/smoke-test-installed-help.py
-  cmp -s /opt/petcam/installer/install.sh /opt/petcam/install.sh && exit 1 || :
-  test -x /usr/local/bin/petcam
+log "Cleaning package caches and verifying the installed application in the final root filesystem."
+run_chroot /bin/bash -e -c '
+  apt-get clean
+  rm -rf /var/lib/apt/lists/*
+  test -s /opt/petcam/build-info
   test -s /opt/petcam/src/petcam/cli.py
   test -s /opt/petcam/lib/libpetcam_live555.so
-  test -s /opt/petcam/build-info
-  grep -Fxq "PETCAM_VERSION=$EXPECTED_VERSION" /opt/petcam/build-info
-  grep -Fxq "SOURCE_COMMIT=$EXPECTED_SOURCE_COMMIT" /opt/petcam/build-info
-  grep -Fxq "INSTALLER_SHA256=$EXPECTED_INSTALLER_SHA256" /opt/petcam/build-info
-  /usr/bin/python3 /opt/petcam/installer/scripts/smoke-test-installed-help.py
-  TERM=xterm-256color /usr/bin/python3 /opt/petcam/installer/scripts/smoke-test-installed-launcher.py
-' || fail "The final image root filesystem failed its installed-launcher or recovery-installer checks."
+  test -x /usr/local/bin/petcam
+  /usr/local/bin/petcam -h
+  PYTHONPATH=/opt/petcam/src /usr/bin/python3 -c "from petcam.infrastructure.streaming.live555 import Live555Server; Live555Server(); print(\"Live555 native library loaded successfully.\")"
+' || fail "The final image failed installed application or native Live555 verification."
 
 if [[ -n "$CHROOT_EMULATOR" ]]; then
   rm -f "$ROOTFS/usr/bin/qemu-arm-static"
