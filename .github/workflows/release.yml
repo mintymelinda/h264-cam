@@ -43,7 +43,6 @@ jobs:
             python3-gst-1.0 \
             gir1.2-gst-rtsp-server-1.0 \
             gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good
       - name: Validate shell syntax
         run: bash -n release.sh build-image.sh install.sh scripts/verify-image-artifact.sh scripts/install-gstreamer-h264parse.sh

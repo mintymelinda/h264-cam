@@ -40,8 +40,8 @@ def _load_gstreamer():
     except (ImportError, ValueError) as error:
         raise GStreamerError(
             "GStreamer RTSP support is missing. Install python3-gi, "
-            "gir1.2-gst-rtsp-server-1.0, gstreamer1.0-plugins-good, "
-            "and gstreamer1.0-plugins-bad."
+            "gir1.2-gst-rtsp-server-1.0, gstreamer1.0-plugins-base, "
+            "gstreamer1.0-plugins-good, and PetCam's minimal h264parse package."
         ) from error
     Gst.init(None)
     return GLib, Gst, GstRtspServer
