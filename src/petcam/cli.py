@@ -402,13 +402,22 @@ def run_stream(config: dict, stdscr) -> int:
             stdscr.addnstr(2, 0, "RTSP URL", max(1, width - 1), curses.A_BOLD)
             stdscr.addnstr(3, 0, url, max(1, width - 1))
             stdscr.addnstr(5, 0, "STREAM STATUS", max(1, width - 1), curses.A_BOLD)
-            stdscr.addnstr(6, 0, f"RTSP: {status.get('state', 'starting').upper()}", max(1, width - 1))
-            clients = status.get("rtsp_clients", 0)
-            client_text = str(clients) if isinstance(clients, int) else "Unavailable"
+            status_updated_at = status.get("updated_at")
+            status_stale = (
+                not isinstance(status_updated_at, (int, float))
+                or time.time() - status_updated_at > 3
+            )
+            rtsp_state = "STATUS STALE" if status_stale else status.get("state", "starting").upper()
+            stdscr.addnstr(6, 0, f"RTSP: {rtsp_state}", max(1, width - 1))
+            clients = status.get("rtsp_clients")
+            if status_stale or not isinstance(clients, int):
+                client_text = "Unavailable"
+            else:
+                client_text = str(clients)
             stdscr.addnstr(7, 0, f"RTSP clients: {client_text}", max(1, width - 1))
             output_rate = status.get("streamed_nals_per_second")
-            if not isinstance(output_rate, (int, float)):
-                output_text = "Unavailable"
+            if status_stale or not isinstance(output_rate, (int, float)):
+                output_text = "Status unavailable"
             elif clients < 1:
                 output_text = "Waiting for RTSP client"
             else:
