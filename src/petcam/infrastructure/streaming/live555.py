@@ -407,9 +407,15 @@ def run_server(camera_status: dict) -> int:
         write_status("stopped", camera_status)
 
 
-def main() -> int:
+def main(run_directory: Path | str | None = None) -> int:
+    global RUN_DIR, CAMERA_STATUS, STREAM_STATUS
+    if run_directory is not None:
+        RUN_DIR = Path(run_directory)
+        CAMERA_STATUS = RUN_DIR / "camera-status.json"
+        STREAM_STATUS = RUN_DIR / "stream-status.json"
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    camera_status = load_camera_status()
+    camera_status = load_camera_status(CAMERA_STATUS)
     if not camera_status:
         logging.error("No active native H.264 camera capture was found.")
         return 1
