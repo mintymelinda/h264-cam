@@ -329,12 +329,40 @@ def _read_status() -> dict:
         return {}
 
 
-def _read_saved_config() -> dict | None:
+STREAM_ENVIRONMENT_KEYS = (
+    "PETCAM_V4L2_MMAP_BUFFERS",
+    "PETCAM_V4L2_STREAM_POLL",
+    "PETCAM_V4L2_CONTROLS",
+    "PETCAM_CSI_INTRA",
+    "PETCAM_CSI_BITRATE",
+    "PETCAM_LIVE555_FRAMER",
+)
+
+
+def _read_saved_payload() -> tuple[dict, dict[str, str]] | None:
     try:
         payload = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        return validate_config(payload)
+        if "camera" in payload:
+            raw_config = payload["camera"]
+            raw_environment = payload.get("environment", {})
+        else:
+            raw_config = payload
+            raw_environment = {}
+        if not isinstance(raw_environment, dict):
+            return None
+        environment = {
+            key: str(raw_environment[key])
+            for key in STREAM_ENVIRONMENT_KEYS
+            if key in raw_environment
+        }
+        return validate_config(raw_config), environment
     except (OSError, ValueError, TypeError, ConfigurationError):
         return None
+
+
+def _read_saved_config() -> dict | None:
+    saved = _read_saved_payload()
+    return saved[0] if saved is not None else None
 
 
 def _save_config(config: dict) -> None:
@@ -348,7 +376,14 @@ def _save_config(config: dict) -> None:
             dir=CONFIG_FILE.parent,
             delete=False,
         ) as handle:
-            json.dump(config, handle)
+            json.dump({
+                "camera": config,
+                "environment": {
+                    key: os.environ[key]
+                    for key in STREAM_ENVIRONMENT_KEYS
+                    if key in os.environ
+                },
+            }, handle)
             handle.write("\n")
             os.fchmod(handle.fileno(), 0o660)
             temporary = Path(handle.name)
@@ -425,15 +460,17 @@ def _remove_camera_marker() -> None:
 
 
 def run_service() -> int:
-    config = _read_saved_config()
-    if config is None:
+    saved = _read_saved_payload()
+    if saved is None:
         raise RuntimeError(f"No valid saved camera configuration exists at {CONFIG_FILE}.")
+    config, saved_environment = saved
 
     RUN_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
     os.chmod(RUN_DIR, 0o755)
     CAMERA_STATUS.unlink(missing_ok=True)
     STREAM_STATUS.unlink(missing_ok=True)
     environment = os.environ.copy()
+    environment.update(saved_environment)
     environment["PETCAM_RUN"] = str(RUN_DIR)
     streaming_process = None
     stopping = threading.Event()
