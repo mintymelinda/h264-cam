@@ -1,0 +1,78 @@
+name: Release H264 Cam Raspberry Pi OS
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: h264-cam-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish Trixie ARMHF image
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Run Python unit tests
+        env:
+          PYTHONPATH: src
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Install image-build host tools and QEMU
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-user-static \
+            curl \
+            xz-utils \
+            parted \
+            e2fsprogs \
+            util-linux
+          test -x /usr/bin/qemu-arm-static
+          /usr/bin/qemu-arm-static --version
+
+      - name: Build final OS image and Raspberry Pi Imager manifest
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          sudo env GITHUB_OUTPUT="$GITHUB_OUTPUT" \
+            bash ./release.sh "$RELEASE_TAG" "$RUNNER_TEMP/h264-cam-release"
+
+      - name: Publish image, checksum and Imager manifest
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: H264 Cam ${{ github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          body: |
+            H264 Cam for Raspberry Pi OS Lite (32-bit ARMHF), based on Raspberry Pi OS Trixie.
+
+            Assets:
+            - Compressed Raspberry Pi OS image (.img.xz)
+            - SHA-256 checksum sidecar
+            - Raspberry Pi Imager OS-list JSON manifest
+
+            Import the JSON manifest into Raspberry Pi Imager to add H264 Cam to the OS selection list. Set the hostname, username, password and Wi-Fi options in Imager before writing the card.
+          files: |
+            ${{ steps.release.outputs.image_path }}
+            ${{ steps.release.outputs.checksum_path }}
+            ${{ steps.release.outputs.manifest_path }}
