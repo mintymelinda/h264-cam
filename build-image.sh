@@ -45,6 +45,8 @@ BUILD_ROOT="$(mktemp -d)"
 ROOTFS="$BUILD_ROOT/rootfs"
 BOOT_MOUNT=""
 LOOP_DEVICE=""
+VERIFY_LOOP_DEVICE=""
+VERIFY_ROOTFS="$BUILD_ROOT/verify-rootfs"
 RESOLV_LINK=""
 RESOLV_BACKUP=""
 RESOLV_WAS_REGULAR=0
@@ -56,11 +58,12 @@ cleanup() {
     rm -f "$ROOTFS/etc/resolv.conf"
     if [[ -n "$RESOLV_LINK" ]]; then ln -s "$RESOLV_LINK" "$ROOTFS/etc/resolv.conf"; elif (( RESOLV_WAS_REGULAR )); then cp -a "$RESOLV_BACKUP" "$ROOTFS/etc/resolv.conf"; fi
   fi
-  for mount_path in "$ROOTFS/run" "$ROOTFS/sys" "$ROOTFS/proc" "$ROOTFS/dev" "$BOOT_MOUNT" "$ROOTFS"; do
+  for mount_path in "$VERIFY_ROOTFS" "$ROOTFS/run" "$ROOTFS/sys" "$ROOTFS/proc" "$ROOTFS/dev" "$BOOT_MOUNT" "$ROOTFS"; do
     if [[ -n "$mount_path" ]] && mountpoint -q "$mount_path"; then
       umount -R "$mount_path" 2>/dev/null || umount -lf "$mount_path" 2>/dev/null || true
     fi
   done
+  if [[ -n "$VERIFY_LOOP_DEVICE" ]]; then losetup -d "$VERIFY_LOOP_DEVICE" 2>/dev/null || true; fi
   if [[ -n "$LOOP_DEVICE" ]]; then losetup -d "$LOOP_DEVICE" 2>/dev/null || true; fi
   rm -rf "$BUILD_ROOT"
 }
@@ -181,6 +184,31 @@ for mount_path in "$ROOTFS/run" "$ROOTFS/sys" "$ROOTFS/proc" "$ROOTFS/dev" "$BOO
 done
 losetup -d "$LOOP_DEVICE"
 LOOP_DEVICE=""
+sync
+
+log "Reattaching the uncompressed image to verify filesystem changes survived unmount."
+VERIFY_LOOP_DEVICE="$(losetup --find --show --partscan "$BASE_IMAGE")"
+for _ in $(seq 1 30); do
+  [[ -b "${VERIFY_LOOP_DEVICE}p2" ]] && break
+  udevadm settle || true
+  sleep 1
+done
+[[ -b "${VERIFY_LOOP_DEVICE}p2" ]] || fail "Could not reattach the customized image for persistence verification."
+mkdir -p "$VERIFY_ROOTFS"
+mount "${VERIFY_LOOP_DEVICE}p2" "$VERIFY_ROOTFS"
+if [[ ! -s "$VERIFY_ROOTFS/opt/petcam/build-info" ]]; then
+  log "The provenance file is missing after unmount. Contents of /opt:"
+  find "$VERIFY_ROOTFS/opt" -maxdepth 4 -printf '%M %u:%g %p\\n' 2>/dev/null || true
+  fail "Build provenance did not persist to the customized image filesystem."
+fi
+grep -Fxq "PETCAM_VERSION=$VERSION" "$VERIFY_ROOTFS/opt/petcam/build-info" || fail "Persisted image version does not match the build version."
+grep -Fxq "SOURCE_COMMIT=$SOURCE_COMMIT" "$VERIFY_ROOTFS/opt/petcam/build-info" || fail "Persisted source commit does not match the build commit."
+VERIFY_INSTALLER_SHA256="$(awk -F= '$1 == "INSTALLER_SHA256" { print $2 }' "$VERIFY_ROOTFS/opt/petcam/build-info")"
+[[ "$VERIFY_INSTALLER_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || fail "Persisted installer checksum is invalid."
+umount "$VERIFY_ROOTFS"
+losetup -d "$VERIFY_LOOP_DEVICE"
+VERIFY_LOOP_DEVICE=""
+sync
 
 FINAL_IMAGE="$OUTPUT_DIR/h264-cam-$VERSION-raspios-lite-armhf.img.xz"
 log "Compressing the customized image."
