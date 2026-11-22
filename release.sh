@@ -32,7 +32,7 @@ PETCAM_VERSION="$VERSION" PETCAM_SOURCE_COMMIT="$SOURCE_COMMIT" PETCAM_SOURCE_RE
 xz --test "$IMAGE_PATH"
 (cd "$OUTPUT_DIR" && sha256sum --check "$(basename "$CHECKSUM_PATH")")
 
-log "Inspecting the exact compressed release image and exercising its retained recovery installer."
+log "Inspecting the exact compressed release image and verifying its installed application."
 "$REPO_ROOT/scripts/verify-image-artifact.sh" "$IMAGE_PATH" "$VERSION" "$SOURCE_COMMIT"
 
 log "Generating the Raspberry Pi Imager OS-list manifest."
