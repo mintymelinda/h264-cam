@@ -20,7 +20,7 @@
 namespace {
 constexpr std::size_t kMaxNal = 16U * 1024U * 1024U;
 constexpr std::size_t kMaxQueue = 64U * 1024U * 1024U;
-struct Nal { std::uint64_t seq; std::vector<unsigned char> data; bool recoveryPoint; };
+struct Nal { std::uint64_t seq; std::vector<unsigned char> data; bool isIdr; };
 std::mutex queueMutex, lifecycleMutex;
 std::deque<Nal> queue;
 std::size_t queueBytes = 0;
@@ -36,6 +36,36 @@ std::string startupMessage;
 std::atomic<unsigned> connectedClients{0};
 std::atomic<unsigned long long> deliveredNals{0};
 std::array<std::atomic<unsigned long long>, 32> deliveredNalsByType{};
+
+using NalIterator = std::deque<Nal>::iterator;
+
+unsigned nalType(const Nal& nal) {
+  return nal.data.empty() ? 0U : static_cast<unsigned>(nal.data[0] & 0x1F);
+}
+
+bool isCompleteRecoverySequence(NalIterator idr) {
+  if (idr - queue.begin() < 2) return false;
+  const auto pps = idr - 1;
+  const auto sps = idr - 2;
+  return idr->isIdr && nalType(*idr) == 5 &&
+    nalType(*sps) == 7 && nalType(*pps) == 8;
+}
+
+NalIterator findLatestRecoveryStart() {
+  auto latest = queue.end();
+  for (auto idr = queue.begin(); idr != queue.end(); ++idr)
+    if (isCompleteRecoverySequence(idr)) latest = idr - 2;
+  return latest;
+}
+
+NalIterator findRecoveryStartAtOrAfter(std::uint64_t minSequence) {
+  for (auto idr = queue.begin(); idr != queue.end(); ++idr) {
+    if (!isCompleteRecoverySequence(idr)) continue;
+    const auto sps = idr - 2;
+    if (sps->seq >= minSequence) return sps;
+  }
+  return queue.end();
+}
 
 bool useDiscreteFramer() {
   const char* value = std::getenv("PETCAM_LIVE555_FRAMER");
@@ -63,24 +93,28 @@ private:
       std::lock_guard<std::mutex> lock(queueMutex);
       if (!queue.empty()) {
         if (!cursorSet_) {
-          for (auto it = queue.rbegin(); it != queue.rend(); ++it)
-            if (it->recoveryPoint) { cursor_ = it->seq; cursorSet_ = true; break; }
+          auto recovery = findLatestRecoveryStart();
+          if (recovery != queue.end()) {
+            cursor_ = recovery->seq;
+            cursorSet_ = true;
+          }
         }
         if (cursorSet_) {
-          if (cursor_ < queue.front().seq) cursorSet_ = false;
-          else {
-            auto it = std::find_if(queue.begin(), queue.end(),
-              [this](const Nal& n) { return n.seq >= cursor_; });
-            if (it != queue.end()) {
-              if (it->seq != cursor_) {
-                it = std::find_if(it, queue.end(), [](const Nal& n) { return n.recoveryPoint; });
-                if (it == queue.end()) cursorSet_ = false;
-              }
-              if (cursorSet_ && it != queue.end()) {
-                data = it->data;
-                cursor_ = it->seq + 1;
-              }
+          auto it = std::find_if(queue.begin(), queue.end(),
+            [this](const Nal& n) { return n.seq >= cursor_; });
+          if (it != queue.end() && it->seq != cursor_) {
+            const auto minimumSequence = std::max(cursor_, queue.front().seq);
+            auto recovery = findRecoveryStartAtOrAfter(minimumSequence);
+            if (recovery != queue.end()) {
+              cursor_ = recovery->seq;
+              it = recovery;
+            } else {
+              cursorSet_ = false;
             }
+          }
+          if (cursorSet_ && it != queue.end()) {
+            data = it->data;
+            cursor_ = it->seq + 1;
           }
         }
       }
@@ -205,9 +239,11 @@ int petcam_start(unsigned short port, const char* path) {
   }
   return startupCode;
 }
-int petcam_push_nal(const unsigned char* data, std::size_t size, int recoveryPoint) {
+int petcam_push_nal(const unsigned char* data, std::size_t size, int isIdr) {
   if (!data || size == 0 || size > kMaxNal) return -1;
-  Nal item{0, std::vector<unsigned char>(data, data + size), recoveryPoint != 0};
+  const bool nalIsIdr = (data[0] & 0x1F) == 5;
+  if (nalIsIdr != (isIdr != 0)) return -1;
+  Nal item{0, std::vector<unsigned char>(data, data + size), isIdr != 0};
   std::lock_guard<std::mutex> lock(queueMutex);
   item.seq = sequence++;
   queueBytes += item.data.size();
