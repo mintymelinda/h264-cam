@@ -175,11 +175,11 @@ class Live555Server:
             message = detail.decode("utf-8", "replace") if detail else "unknown error"
             raise Live555Error(f"Unable to start Live555 RTSP server: {message}")
 
-    def push_nal(self, nal: bytes, recovery_point: bool = False) -> None:
+    def push_nal(self, nal: bytes, is_idr: bool = False) -> None:
         if not nal or len(nal) > MAX_NAL_BYTES:
             raise Live555Error("H.264 NAL unit is empty or exceeds the size limit.")
         buffer = (ctypes.c_ubyte * len(nal)).from_buffer_copy(nal)
-        if self.library.petcam_push_nal(buffer, len(nal), int(recovery_point)) != 0:
+        if self.library.petcam_push_nal(buffer, len(nal), int(is_idr)) != 0:
             raise Live555Error("Live555 rejected an H.264 NAL unit.")
 
     def client_count(self) -> int:
@@ -217,8 +217,8 @@ class H264Publisher:
                 "queued": {str(nal_type): count for nal_type, count in self._queued_nals.items()},
             }
 
-    def _queue(self, payload: bytes, *, recovery_point: bool = False) -> None:
-        self.server.push_nal(payload, recovery_point=recovery_point)
+    def _queue(self, payload: bytes, *, is_idr: bool = False) -> None:
+        self.server.push_nal(payload, is_idr=is_idr)
         nal_type = payload[0] & 0x1F
         with self._counter_lock:
             self._queued_nals[nal_type] += 1
@@ -246,11 +246,11 @@ class H264Publisher:
         elif nal_type == 5:
             if not self.sps or not self.pps:
                 raise Live555Error("Camera emitted an IDR before SPS and PPS were available.")
-            # The SPS is the queue recovery marker: a new RTSP reader must start
-            # before PPS + IDR, not at the IDR after its required parameter sets.
-            self._queue(self.sps, recovery_point=True)
+            # Mark the actual IDR NAL. Live555 rewinds to the SPS/PPS entries
+            # immediately before it when a client joins or the queue loses data.
+            self._queue(self.sps)
             self._queue(self.pps)
-            self._queue(payload)
+            self._queue(payload, is_idr=True)
             self.started = True
         elif self.started:
             self._queue(payload)
