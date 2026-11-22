@@ -6,8 +6,8 @@ OUTPUT_DIR="${1:-$REPO_ROOT/dist/image}"
 RASPIOS_IMAGE_URL="${PETCAM_RASPIOS_IMAGE_URL:-https://downloads.raspberrypi.com/raspios_lite_armhf_latest}"
 VERSION="${PETCAM_VERSION:-development}"
 
-log() { printf '[petcam-image] %s\\n' "$*"; }
-fail() { printf '[petcam-image] ERROR: %s\\n' "$*" >&2; exit 1; }
+log() { printf '[petcam-image] %s\n' "$*"; }
+fail() { printf '[petcam-image] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [[ "$EUID" -eq 0 ]] || fail "Run this image customizer as root (for example: sudo $0 ...)."
 [[ -s "$REPO_ROOT/install.sh" && -s "$REPO_ROOT/requirements.apt" && -s "$REPO_ROOT/requirements.txt" && -s "$REPO_ROOT/src/petcam/cli.py" ]] || fail "Run this script from a complete PetCam source checkout; required installer and application files must be non-empty."
@@ -74,7 +74,7 @@ curl --fail --location --retry 5 --retry-all-errors --silent --show-error "${RAS
 
 BASE_SHA256="$(awk 'NR == 1 { print $1 }' "$BASE_CHECKSUM")"
 [[ "$BASE_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || fail "Raspberry Pi returned an invalid SHA-256 sidecar."
-printf '%s  %s\\n' "$BASE_SHA256" "$BASE_ARCHIVE" | sha256sum --check --status || fail "Official Raspberry Pi OS image checksum verification failed."
+printf '%s  %s\n' "$BASE_SHA256" "$BASE_ARCHIVE" | sha256sum --check --status || fail "Official Raspberry Pi OS image checksum verification failed."
 log "Verified upstream image SHA-256: $BASE_SHA256"
 
 log "Decompressing the verified stock image."
