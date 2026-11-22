@@ -47,16 +47,18 @@ class RTSPConnection:
         del self._buffer[:size]
         return result
 
-    def _read_response(self) -> tuple[int, dict[str, str], bytes]:
+    def _read_response(self, method: str) -> tuple[int, dict[str, str], bytes]:
         while b"\r\n\r\n" not in self._buffer:
             if self._buffer and self._buffer[0] == ord("$"):
                 raise RTSPProbeError(
-                    "Server sent interleaved RTP/RTCP before completing the RTSP response."
+                    f"Server sent interleaved media on channel {self._buffer[1]} "
+                    f"before the {method} RTSP response."
                 )
             self._receive()
         if self._buffer and self._buffer[0] == ord("$"):
             raise RTSPProbeError(
-                "Server sent interleaved RTP/RTCP before completing the RTSP response."
+                f"Server sent interleaved media on channel {self._buffer[1]} "
+                f"before the {method} RTSP response."
             )
         header_end = self._buffer.index(b"\r\n\r\n")
         raw_headers = bytes(self._buffer[:header_end])
@@ -95,7 +97,7 @@ class RTSPConnection:
             + "\r\n"
         )
         self._socket.sendall(request.encode("latin-1"))
-        return self._read_response()
+        return self._read_response(method)
 
     def wait_for_rtp(self, timeout: float) -> tuple[int, int]:
         deadline = time.monotonic() + timeout
