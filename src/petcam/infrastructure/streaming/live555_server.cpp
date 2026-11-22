@@ -16,6 +16,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include "nal_chunk.hpp"
 
 namespace {
 constexpr std::size_t kMaxNal = 16U * 1024U * 1024U;
@@ -88,63 +89,82 @@ private:
   static void retry(void* p) { static_cast<NalSource*>(p)->deliver(); }
   void deliver() {
     if (!isCurrentlyAwaitingData()) return;
-    std::vector<unsigned char> data;
-    {
-      std::lock_guard<std::mutex> lock(queueMutex);
-      if (!queue.empty()) {
-        if (!cursorSet_) {
-          auto recovery = findLatestRecoveryStart();
-          if (recovery != queue.end()) {
-            cursor_ = recovery->seq;
-            cursorSet_ = true;
-          }
-        }
-        if (cursorSet_) {
-          auto it = std::find_if(queue.begin(), queue.end(),
-            [this](const Nal& n) { return n.seq >= cursor_; });
-          if (it != queue.end() && it->seq != cursor_) {
-            const auto minimumSequence = std::max(cursor_, queue.front().seq);
-            auto recovery = findRecoveryStartAtOrAfter(minimumSequence);
-            if (recovery != queue.end()) {
-              cursor_ = recovery->seq;
-              it = recovery;
-            } else {
-              cursorSet_ = false;
-            }
-          }
-          if (cursorSet_ && it != queue.end()) {
-            data = it->data;
-            cursor_ = it->seq + 1;
-          }
-        }
-      }
-    }
-    if (data.empty()) {
+
+    if (currentNal_.empty()) loadNextNal();
+    if (currentNal_.empty()) {
       nextTask() = envir().taskScheduler().scheduleDelayedTask(5000, retry, this);
       return;
     }
-    static constexpr unsigned char startCode[] = {0, 0, 0, 1};
-    const std::size_t prefixSize = includeStartCode_ ? sizeof(startCode) : 0;
-    const std::size_t framedSize = data.size() + prefixSize;
-    fFrameSize = static_cast<unsigned>(std::min<std::size_t>(framedSize, fMaxSize));
-    fNumTruncatedBytes = static_cast<unsigned>(framedSize - fFrameSize);
-    if (prefixSize > 0) {
-      const std::size_t copiedPrefix = std::min<std::size_t>(prefixSize, fFrameSize);
-      std::memcpy(fTo, startCode, copiedPrefix);
-      if (fFrameSize > copiedPrefix)
-        std::memcpy(fTo + copiedPrefix, data.data(), fFrameSize - copiedPrefix);
-    } else {
-      std::memcpy(fTo, data.data(), fFrameSize);
+
+    // The discrete framer requires one whole NAL per callback. The byte-stream
+    // framer can accept partial reads, so preserve the NAL and continue it on
+    // subsequent callbacks when its parser asks for a smaller buffer.
+    if (!includeStartCode_ && currentNal_.size() > fMaxSize) {
+      fNumTruncatedBytes = static_cast<unsigned>(currentNal_.size() - fMaxSize);
+      envir() << "PetCam: discrete H.264 NAL exceeds the Live555 source buffer\\n";
+      handleClosure();
+      return;
+    }
+
+    const auto chunk = petcam::copyNalChunk(
+      currentNal_, currentNalOffset_, includeStartCode_, fTo, fMaxSize
+    );
+    if (chunk.size == 0) {
+      nextTask() = envir().taskScheduler().scheduleDelayedTask(5000, retry, this);
+      return;
+    }
+
+    fFrameSize = static_cast<unsigned>(chunk.size);
+    fNumTruncatedBytes = 0;
+    if (chunk.complete) {
+      const unsigned type = currentNal_[0] & 0x1F;
+      deliveredNalsByType[type].fetch_add(1, std::memory_order_relaxed);
+      deliveredNals.fetch_add(1, std::memory_order_relaxed);
+      currentNal_.clear();
+      currentNalOffset_ = 0;
     }
     gettimeofday(&fPresentationTime, nullptr);
     fDurationInMicroseconds = 0;
-    deliveredNalsByType[data[0] & 0x1F].fetch_add(1, std::memory_order_relaxed);
-    deliveredNals.fetch_add(1, std::memory_order_relaxed);
     FramedSource::afterGetting(this);
+  }
+
+  void loadNextNal() {
+    std::lock_guard<std::mutex> lock(queueMutex);
+    if (queue.empty()) return;
+
+    if (!cursorSet_) {
+      auto recovery = findLatestRecoveryStart();
+      if (recovery != queue.end()) {
+        cursor_ = recovery->seq;
+        cursorSet_ = true;
+      }
+    }
+    if (!cursorSet_) return;
+
+    auto it = std::find_if(queue.begin(), queue.end(),
+      [this](const Nal& n) { return n.seq >= cursor_; });
+    if (it != queue.end() && it->seq != cursor_) {
+      const auto minimumSequence = std::max(cursor_, queue.front().seq);
+      auto recovery = findRecoveryStartAtOrAfter(minimumSequence);
+      if (recovery != queue.end()) {
+        cursor_ = recovery->seq;
+        it = recovery;
+      } else {
+        cursorSet_ = false;
+        return;
+      }
+    }
+    if (it == queue.end()) return;
+
+    currentNal_ = it->data;
+    currentNalOffset_ = 0;
+    cursor_ = it->seq + 1;
   }
   std::uint64_t cursor_ = 0;
   bool cursorSet_ = false;
   bool includeStartCode_;
+  std::vector<unsigned char> currentNal_;
+  std::size_t currentNalOffset_ = 0;
 };
 
 class H264Subsession final : public OnDemandServerMediaSubsession {
