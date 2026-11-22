@@ -86,6 +86,10 @@ trap - EXIT
 [[ -s "$APP_ROOT/lib/libpetcam_live555.so" ]] || fail "The installed Live555 shared library is empty."
 log "Loading the compiled Live555 library through the installed Python binding."
 PYTHONPATH="$APP_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" /usr/bin/python3 -c 'from petcam.infrastructure.streaming.live555 import Live555Server; Live555Server(); print("Live555 native library loaded successfully.")'
+log "Testing RTSP interleaved TCP negotiation and RTP delivery."
+PYTHONPATH="$APP_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+PETCAM_LIVE555_LIBRARY="$APP_ROOT/lib/libpetcam_live555.so" \
+  /usr/bin/python3 "$REPO_ROOT/scripts/check_rtsp_tcp.py" --self-test
 log "Leaving build dependencies installed. Do not purge packages or run autoremove on the Pi."
 LAUNCHER_TMP="/usr/local/bin/.petcam.${BASHPID}"
 log "Installing and validating the PetCam command launcher."
