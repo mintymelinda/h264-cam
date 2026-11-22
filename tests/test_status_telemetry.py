@@ -30,7 +30,7 @@ class GStreamerRtspTests(unittest.TestCase):
             on_media_configure=lambda appsrc: media_configured.append(appsrc),
         )
 
-        def exchange(client, request, expected_body=False):
+        def exchange(client, request):
             client.sendall(request.encode("ascii"))
             response = bytearray()
             deadline = time.monotonic() + 3
@@ -42,11 +42,11 @@ class GStreamerRtspTests(unittest.TestCase):
                         response.extend(chunk)
                 except BlockingIOError:
                     pass
-                header_end = response.find(b"\\r\\n\\r\\n")
+                header_end = response.find(b"\r\n\r\n")
                 if header_end >= 0:
                     headers = bytes(response[:header_end]).lower()
                     content_length = 0
-                    for line in headers.split(b"\\r\\n")[1:]:
+                    for line in headers.split(b"\r\n")[1:]:
                         if line.startswith(b"content-length:"):
                             content_length = int(line.partition(b":")[2].strip())
                             break
@@ -60,16 +60,16 @@ class GStreamerRtspTests(unittest.TestCase):
                 client.setblocking(False)
                 options = exchange(
                     client,
-                    f"OPTIONS rtsp://127.0.0.1:{port}/petcam RTSP/1.0\\r\\n"
-                    "CSeq: 1\\r\\nUser-Agent: PetCam-test\\r\\n\\r\\n",
+                    f"OPTIONS rtsp://127.0.0.1:{port}/petcam RTSP/1.0\r\n"
+                    "CSeq: 1\r\nUser-Agent: PetCam-test\r\n\r\n",
                 )
                 self.assertIn(b"RTSP/1.0 200", options)
 
                 describe = exchange(
                     client,
-                    f"DESCRIBE rtsp://127.0.0.1:{port}/petcam RTSP/1.0\\r\\n"
-                    "CSeq: 2\\r\\nAccept: application/sdp\\r\\n"
-                    "User-Agent: PetCam-test\\r\\n\\r\\n",
+                    f"DESCRIBE rtsp://127.0.0.1:{port}/petcam RTSP/1.0\r\n"
+                    "CSeq: 2\r\nAccept: application/sdp\r\n"
+                    "User-Agent: PetCam-test\r\n\r\n",
                     expected_body=True,
                 )
                 self.assertIn(b"RTSP/1.0 200", describe)
