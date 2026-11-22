@@ -1,7 +1,9 @@
 # Native camera capture and GStreamer RTSP server runtime.
 python3
 python3-gi
+python3-gst-1.0
 gir1.2-gst-rtsp-server-1.0
+gstreamer1.0-plugins-base
 gstreamer1.0-plugins-good
 gstreamer1.0-plugins-bad
 v4l-utils
