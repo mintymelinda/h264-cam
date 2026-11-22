@@ -17,9 +17,6 @@ START_TIMEOUT = 8.0
 STABLE_UI_SECONDS = 1.5
 
 
-
-
-
 def rendered_screen(output: bytes) -> str | None:
     if SETUP_SCREEN in output:
         return "setup menu"
