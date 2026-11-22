@@ -81,6 +81,7 @@ if [[ -n "$CHROOT_EMULATOR" ]]; then
 fi
 cp -a "$ROOTFS/etc/resolv.conf" "$WORK_ROOT/resolv.conf.original"
 RESOLV_BACKUP="$WORK_ROOT/resolv.conf.original"
+rm -f "$ROOTFS/etc/resolv.conf"
 cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
 RESOLV_REPLACED=1
 mount --rbind /dev "$ROOTFS/dev"
