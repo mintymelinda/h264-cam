@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 from ..camera.discovery import detect_hardware_h264_encoder
-from ..camera.h264 import AnnexBNalFramer, H264FramingError
+from ..camera.h264 import AnnexBNalFramer, H264FramingError, first_mb_in_slice
 from ..system.hostname import advertised_hostname
 
 RUN_DIR = Path(os.environ.get("PETCAM_RUN", f"/tmp/petcam-{os.getuid()}"))
@@ -199,7 +199,7 @@ class Live555Server:
 
 
 class H264Publisher:
-    """Cache parameter sets and prepend them at each independently decodable IDR."""
+    """Cache parameter sets and prepend them only before the first slice of each IDR picture."""
 
     def __init__(self, server: Live555Server):
         self.server = server
@@ -244,14 +244,21 @@ class H264Publisher:
         elif nal_type == 8:
             self.pps = payload
         elif nal_type == 5:
-            if not self.sps or not self.pps:
-                raise Live555Error("Camera emitted an IDR before SPS and PPS were available.")
-            # Mark the actual IDR NAL. Live555 rewinds to the SPS/PPS entries
-            # immediately before it when a client joins or the queue loses data.
-            self._queue(self.sps)
-            self._queue(self.pps)
+            first_mb = first_mb_in_slice(b"\\x00\\x00\\x00\\x01" + payload)
+            if first_mb == 0:
+                if not self.sps or not self.pps:
+                    raise Live555Error("Camera emitted an IDR before SPS and PPS were available.")
+                # Parameter sets belong before the picture, not between its
+                # slices. Repeating them between IDR slices breaks the access unit.
+                self._queue(self.sps)
+                self._queue(self.pps)
+                self.started = True
+            elif not self.started:
+                # A continuation slice cannot independently start a stream.
+                return
+            # Every IDR slice is type 5, but only the first one follows the
+            # SPS/PPS recovery pair and can be used as a queue restart point.
             self._queue(payload, is_idr=True)
-            self.started = True
         elif self.started:
             self._queue(payload)
 
