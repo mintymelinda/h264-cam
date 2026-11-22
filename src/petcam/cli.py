@@ -10,11 +10,11 @@ import logging
 import math
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
-import signal
 import time
 from pathlib import Path
 
@@ -369,6 +369,7 @@ def _read_saved_config() -> dict | None:
 
 def _save_config(config: dict) -> None:
     CONFIG_FILE.parent.mkdir(mode=0o2770, parents=True, exist_ok=True)
+    temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -391,10 +392,8 @@ def _save_config(config: dict) -> None:
             temporary = Path(handle.name)
         os.replace(temporary, CONFIG_FILE)
     except OSError as error:
-        try:
+        if temporary is not None:
             temporary.unlink(missing_ok=True)
-        except (UnboundLocalError, OSError):
-            pass
         raise RuntimeError(
             f"Unable to save the camera configuration at {CONFIG_FILE}: {error}. "
             "The login account must belong to the video group; log out and back in "
@@ -420,11 +419,17 @@ def _systemctl(action: str) -> None:
 def _terminate(process: subprocess.Popen | None) -> None:
     if process is None or process.poll() is not None:
         return
-    process.terminate()
+    try:
+        process.terminate()
+    except ProcessLookupError:
+        return
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        process.kill()
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
         process.wait(timeout=2)
 
 
