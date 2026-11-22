@@ -1,9 +1,12 @@
 #include <liveMedia.hh>
+#include <H264VideoStreamDiscreteFramer.hh>
 #include <BasicUsageEnvironment.hh>
 #include <GroupsockHelper.hh>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <condition_variable>
 #include <chrono>
@@ -17,7 +20,7 @@
 namespace {
 constexpr std::size_t kMaxNal = 16U * 1024U * 1024U;
 constexpr std::size_t kMaxQueue = 64U * 1024U * 1024U;
-struct Nal { std::uint64_t seq; std::vector<unsigned char> data; bool key; };
+struct Nal { std::uint64_t seq; std::vector<unsigned char> data; bool recoveryPoint; };
 std::mutex queueMutex, lifecycleMutex;
 std::deque<Nal> queue;
 std::size_t queueBytes = 0;
@@ -32,12 +35,21 @@ int startupCode = -1;
 std::string startupMessage;
 std::atomic<unsigned> connectedClients{0};
 std::atomic<unsigned long long> deliveredNals{0};
+std::array<std::atomic<unsigned long long>, 32> deliveredNalsByType{};
+
+bool useDiscreteFramer() {
+  const char* value = std::getenv("PETCAM_LIVE555_FRAMER");
+  return value != nullptr && std::strcmp(value, "discrete") == 0;
+}
 
 class NalSource final : public FramedSource {
 public:
-  static NalSource* createNew(UsageEnvironment& env) { return new NalSource(env); }
+  static NalSource* createNew(UsageEnvironment& env, bool includeStartCode) {
+    return new NalSource(env, includeStartCode);
+  }
 protected:
-  explicit NalSource(UsageEnvironment& env) : FramedSource(env) {}
+  explicit NalSource(UsageEnvironment& env, bool includeStartCode)
+    : FramedSource(env), includeStartCode_(includeStartCode) {}
   void doGetNextFrame() override { deliver(); }
   void doStopGettingFrames() override {
     if (nextTask() != nullptr) envir().taskScheduler().unscheduleDelayedTask(nextTask());
@@ -52,7 +64,7 @@ private:
       if (!queue.empty()) {
         if (!cursorSet_) {
           for (auto it = queue.rbegin(); it != queue.rend(); ++it)
-            if (it->key) { cursor_ = it->seq; cursorSet_ = true; break; }
+            if (it->recoveryPoint) { cursor_ = it->seq; cursorSet_ = true; break; }
         }
         if (cursorSet_) {
           if (cursor_ < queue.front().seq) cursorSet_ = false;
@@ -78,20 +90,27 @@ private:
       return;
     }
     static constexpr unsigned char startCode[] = {0, 0, 0, 1};
-    const std::size_t framedSize = data.size() + sizeof(startCode);
+    const std::size_t prefixSize = includeStartCode_ ? sizeof(startCode) : 0;
+    const std::size_t framedSize = data.size() + prefixSize;
     fFrameSize = static_cast<unsigned>(std::min<std::size_t>(framedSize, fMaxSize));
     fNumTruncatedBytes = static_cast<unsigned>(framedSize - fFrameSize);
-    const std::size_t prefixSize = std::min<std::size_t>(sizeof(startCode), fFrameSize);
-    std::memcpy(fTo, startCode, prefixSize);
-    if (fFrameSize > prefixSize)
-      std::memcpy(fTo + prefixSize, data.data(), fFrameSize - prefixSize);
+    if (prefixSize > 0) {
+      const std::size_t copiedPrefix = std::min<std::size_t>(prefixSize, fFrameSize);
+      std::memcpy(fTo, startCode, copiedPrefix);
+      if (fFrameSize > copiedPrefix)
+        std::memcpy(fTo + copiedPrefix, data.data(), fFrameSize - copiedPrefix);
+    } else {
+      std::memcpy(fTo, data.data(), fFrameSize);
+    }
     gettimeofday(&fPresentationTime, nullptr);
     fDurationInMicroseconds = 0;
-    FramedSource::afterGetting(this);
+    deliveredNalsByType[data[0] & 0x1F].fetch_add(1, std::memory_order_relaxed);
     deliveredNals.fetch_add(1, std::memory_order_relaxed);
+    FramedSource::afterGetting(this);
   }
   std::uint64_t cursor_ = 0;
   bool cursorSet_ = false;
+  bool includeStartCode_;
 };
 
 class H264Subsession final : public OnDemandServerMediaSubsession {
@@ -102,7 +121,14 @@ protected:
   FramedSource* createNewStreamSource(unsigned, unsigned& bitrate) override {
     bitrate = 8000;
     connectedClients.fetch_add(1, std::memory_order_relaxed);
-    return H264VideoStreamFramer::createNew(envir(), NalSource::createNew(envir()));
+    const bool discrete = useDiscreteFramer();
+    FramedSource* source = NalSource::createNew(envir(), !discrete);
+    if (discrete) {
+      // Keep to the three-argument API available in the Raspberry Pi OS
+      // Trixie Live555 package; the fourth delimiter option is newer upstream.
+      return H264VideoStreamDiscreteFramer::createNew(envir(), source, False);
+    }
+    return H264VideoStreamFramer::createNew(envir(), source);
   }
   void closeStreamSource(FramedSource* inputSource) override {
     unsigned current = connectedClients.load(std::memory_order_relaxed);
@@ -167,6 +193,7 @@ int petcam_start(unsigned short port, const char* path) {
   if (worker.joinable()) return -1;
   connectedClients.store(0, std::memory_order_relaxed);
   deliveredNals.store(0, std::memory_order_relaxed);
+  for (auto& count : deliveredNalsByType) count.store(0, std::memory_order_relaxed);
   startupDone = false;
   startupCode = -1;
   startupMessage.clear();
@@ -178,9 +205,9 @@ int petcam_start(unsigned short port, const char* path) {
   }
   return startupCode;
 }
-int petcam_push_nal(const unsigned char* data, std::size_t size, int keyframe) {
+int petcam_push_nal(const unsigned char* data, std::size_t size, int recoveryPoint) {
   if (!data || size == 0 || size > kMaxNal) return -1;
-  Nal item{0, std::vector<unsigned char>(data, data + size), keyframe != 0};
+  Nal item{0, std::vector<unsigned char>(data, data + size), recoveryPoint != 0};
   std::lock_guard<std::mutex> lock(queueMutex);
   item.seq = sequence++;
   queueBytes += item.data.size();
@@ -194,6 +221,10 @@ int petcam_push_nal(const unsigned char* data, std::size_t size, int keyframe) {
 const char* petcam_last_error() { return startupMessage.c_str(); }
 unsigned petcam_client_count() { return connectedClients.load(std::memory_order_relaxed); }
 unsigned long long petcam_nal_count() { return deliveredNals.load(std::memory_order_relaxed); }
+unsigned long long petcam_nal_type_count(unsigned int nalType) {
+  if (nalType >= deliveredNalsByType.size()) return 0;
+  return deliveredNalsByType[nalType].load(std::memory_order_relaxed);
+}
 void petcam_stop() {
   {
     std::lock_guard<std::mutex> lock(lifecycleMutex);
