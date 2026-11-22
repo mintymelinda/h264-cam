@@ -28,7 +28,7 @@ class ManagedStreamTests(unittest.TestCase):
                 patch.dict(os.environ, {
                     "PETCAM_V4L2_MMAP_BUFFERS": "8",
                     "PETCAM_V4L2_CONTROLS": "video_bitrate=6000000",
-                }),
+                }, clear=True),
             ):
                 cli._save_config(USB_CONFIG)
                 saved = cli._read_saved_payload()
