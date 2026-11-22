@@ -1,2 +1,2 @@
-# No PyPI dependencies are required.
-# Python uses the standard library; RTSP/RTP is provided by native Live555.
+# Application logic uses the Python standard library and system GObject introspection bindings.
+# GStreamer and gst-rtsp-server are installed from Raspberry Pi OS packages.

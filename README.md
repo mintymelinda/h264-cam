@@ -1,8 +1,8 @@
 # H264 Cam
 
-H264 Cam serves a camera's native H.264 capture stream over RTSP using Live555. It does
-not decode, transcode, or provide a web interface, motion processing, timelapse, or
-Home Assistant integration.
+H264 Cam publishes a camera's **native H.264 stream over RTSP using GStreamer**. It does
+not decode or re-encode video, and it does not provide a web interface, motion processing,
+timelapse, or Home Assistant integration.
 
 ## Supported platform
 
@@ -19,10 +19,9 @@ On a supported Raspberry Pi OS installation:
 sudo ./install.sh
 ```
 
-The installer uses the Live555 packages provided by Raspberry Pi OS and compiles the native
-RTSP/RTP server against the system libraries. The compiler and development packages remain
-installed; the installer deliberately does not run package autoremove. No GStreamer or PyPI
-dependencies are required.
+The installer installs the GStreamer RTSP Server Python bindings and the GStreamer H.264
+parser and RTP payloader from Raspberry Pi OS packages. It does not compile or install a
+separate native RTSP server.
 
 Run the guided terminal workflow:
 
@@ -30,30 +29,15 @@ Run the guided terminal workflow:
 petcam
 ```
 
-### Keep the stream running after SSH disconnects
-
-The guided interface stays open while the stream is running. Use `tmux` so the terminal
-session and stream continue running after you disconnect SSH:
-
-```sh
-tmux new -s h264-cam
-petcam
-```
-
-Detach without stopping the stream by pressing **Ctrl+B**, then **D**. You can now close SSH.
-When you reconnect, return to the running interface with:
-
-```sh
-tmux attach -t h264-cam
-```
-
-Press `q` inside the PetCam interface when you actually want to stop the stream. This keeps
-the process alive across SSH disconnects; it does not configure automatic startup after reboot.
+**Leave this terminal window open while the stream is running.** The camera capture and
+GStreamer RTSP server are owned by this foreground PetCam process. Press **q** to stop
+the stream cleanly. Closing the terminal or disconnecting SSH ends the foreground process
+and stops the stream. PetCam does not install a systemd service or run a detached server.
 
 ## Repair an installed image
 
 The prebuilt image retains the exact release checkout at `/opt/petcam/source/`. To
-reinstall the application and rebuild its native Live555 library from that checkout:
+reinstall the application from that checkout:
 
 ```sh
 sudo /opt/petcam/source/install.sh
@@ -79,21 +63,31 @@ The RTSP endpoint is `rtsp://DEVICE-HOSTNAME.local:8554/petcam`. The installer i
 uses the system hostname with `.local`; set `PETCAM_ADVERTISE_HOST` to override it when
 using a different DNS name. The client must support mDNS/Bonjour name resolution.
 
-### Stream diagnostics and experimental capture settings
+## Streaming pipeline
 
-The terminal status display separates NAL units seen from the camera, accepted into the
-Live555 queue, and handed to Live555's RTSP media source. Each stage reports IDR (NAL type 5)
-and non-IDR slice (NAL type 1) counts independently. RTSP-source counts are not a packet-level
-network acknowledgement; they show what Live555 handed to its RTP sink.
+USB H.264 is captured directly with V4L2. CSI H.264 is captured with `rpicam-vid`.
+PetCam passes the resulting Annex-B byte stream into this GStreamer RTSP pipeline:
 
-For multi-slice H.264 pictures, PetCam reads `first_mb_in_slice` to recognize the first
-slice of an IDR picture. It places the cached SPS/PPS before that first slice only; it does not
-insert parameter sets between continuation slices of the same picture. This preserves the
-picture's access-unit structure while retaining an SPS/PPS + IDR recovery point for new clients.
+```
+appsrc
+  ! h264parse
+  ! video/x-h264,alignment=au
+  ! queue (bounded, drops old access units for slow clients)
+  ! rtph264pay
+  ! GStreamer RTSP Server
+```
 
-PetCam accepts both UDP RTP and RTP interleaved over the RTSP TCP connection. The RTSP client
-selects the transport in its SETUP request; PetCam preserves that request and returns matching
-transport parameters. For VLC, request TCP with:
+GStreamer handles H.264 stream parsing, access-unit framing, RTP packetization, RTSP
+sessions, and client transport negotiation. The pipeline has no video decoder or encoder:
+the camera's encoded H.264 data is passed through. The RTP payloader is configured to
+repeat available SPS/PPS parameter sets with every IDR frame. The downstream queue is
+bounded so a slow client does not make latency grow without limit.
+
+The terminal display reports RTSP readiness, connected clients, received camera-data rate,
+and system resource usage. It does not claim that bytes read from the camera have been
+acknowledged by a remote client.
+
+For VLC, request RTSP over TCP with:
 
 ```sh
 vlc --rtsp-tcp rtsp://DEVICE-HOSTNAME.local:8554/petcam
@@ -107,9 +101,10 @@ python3 scripts/check_rtsp_tcp.py rtsp://DEVICE-HOSTNAME.local:8554/petcam
 
 Run this probe from a machine that can reach the camera's RTSP endpoint. It verifies
 RTSP/TCP negotiation and receipt of an interleaved RTP packet from the running stream.
-It is a manual endpoint check, not an installer or image-build test.
 
-Optional environment variables can be set before launching `petcam`:
+## Optional camera settings
+
+Environment variables can be set before launching `petcam`:
 
 | Variable | Default | Purpose |
 |---|---:|---|
@@ -118,7 +113,6 @@ Optional environment variables can be set before launching `petcam`:
 | `PETCAM_V4L2_CONTROLS` | unset | Optional integer controls passed to `v4l2-ctl --set-ctrl`, e.g. `video_gop_size=30,video_bitrate=6000000` |
 | `PETCAM_CSI_INTRA` | `30` | CSI H.264 I-frame interval in frames |
 | `PETCAM_CSI_BITRATE` | `8000000` | CSI H.264 target bitrate in bits per second |
-| `PETCAM_LIVE555_FRAMER` | `stream` | Select `stream` (Annex-B byte-stream parser) or experimental `discrete` NAL framing |
 
 For example, to test the optional USB controls and a larger capture ring:
 
@@ -131,16 +125,7 @@ petcam
 V4L2 encoder controls are driver-specific and are **not** assumed to exist on every USB
 camera. Check that the selected device exposes the named controls before setting them;
 an unsupported control can cause capture startup to fail. The CSI GOP and bitrate settings
-apply only to `rpicam-vid` cameras. The discrete Live555 framer assumes each source item is a
-complete NAL unit; its access-unit marker is approximate for streams that split one picture
-across multiple slices, so it is an experiment rather than the default.
-
-USB H.264 is captured
-directly with V4L2; CSI H.264 is captured with `rpicam-vid`. Both paths pass Annex-B
-NAL units to Live555 without decoding or transcoding. Only the IDR NAL (type 5) carries
-the `is_idr` marker. When a client joins or the queue loses data, Live555 uses that IDR
-marker to locate the associated SPS/PPS entries immediately before it and resumes from
-that complete recovery sequence.
+apply only to `rpicam-vid` cameras.
 
 ## Build an image locally
 
@@ -155,8 +140,9 @@ sudo ./build-image.sh
 ## Create a release
 
 Releases are built from version tags such as `v1.0.0`. The release script builds and
-validates the final `.img.xz`, verifies its SHA-256 sidecar, and generates the Raspberry
-Pi Imager JSON manifest using the matching official Raspberry Pi OS manifest entry.
+validates the final `.img.xz`, verifies its SHA-256 sidecar, and generates the
+Raspberry Pi Imager JSON manifest using the matching official Raspberry Pi OS manifest
+entry.
 
 ```sh
 sudo ./release.sh v1.0.0

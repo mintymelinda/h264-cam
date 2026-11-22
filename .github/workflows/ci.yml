@@ -12,22 +12,23 @@ permissions:
 
 jobs:
   test:
-    name: Python tests and Live555 native build
+    name: Python tests and GStreamer RTSP runtime
     runs-on: ubuntu-24.04
     container: debian:sid
     timeout-minutes: 15
 
     steps:
-      - name: Install Git and Live555 build dependencies
+      - name: Install Git and GStreamer runtime dependencies
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
             git \
             ca-certificates \
             python3 \
-            g++ \
-            liblivemedia-dev \
-            libssl-dev
+            python3-gi \
+            gir1.2-gst-rtsp-server-1.0 \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad
 
       - name: Check out source
         uses: actions/checkout@v5
@@ -43,27 +44,16 @@ jobs:
           PYTHONPATH: src
         run: python3 -m unittest discover -s tests -v
 
-      - name: Test bounded native NAL delivery
+      - name: Validate the GStreamer RTSP runtime
         run: |
-          g++ -std=c++17 -Wall -Wextra -Werror \
-            -Isrc/petcam/infrastructure/streaming \
-            tests/test_live555_nal_chunks.cpp \
-            -o "$RUNNER_TEMP/test_live555_nal_chunks"
-          "$RUNNER_TEMP/test_live555_nal_chunks"
+          python3 -c 'from petcam.infrastructure.streaming.gstreamer import validate_runtime; validate_runtime()'
+          gst-inspect-1.0 appsrc >/dev/null
+          gst-inspect-1.0 h264parse >/dev/null
+          gst-inspect-1.0 rtph264pay >/dev/null
 
-      - name: Build the Live555 shared library
+      - name: Test the installed foreground launcher
         run: |
-          g++ -std=c++17 -O2 -fPIC -shared \
-            -I/usr/include/liveMedia -I/usr/include/groupsock \
-            -I/usr/include/BasicUsageEnvironment -I/usr/include/UsageEnvironment \
-            src/petcam/infrastructure/streaming/live555_server.cpp \
-            -o "$RUNNER_TEMP/libpetcam_live555.so" \
-            -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment -pthread
-          test -s "$RUNNER_TEMP/libpetcam_live555.so"
-          ldd "$RUNNER_TEMP/libpetcam_live555.so"
-          install -d -m 0755 /opt/petcam/src /opt/petcam/lib /usr/local/bin
+          install -d -m 0755 /opt/petcam/src /usr/local/bin
           cp -a src/petcam /opt/petcam/src/
-          install -m 0755 "$RUNNER_TEMP/libpetcam_live555.so" /opt/petcam/lib/libpetcam_live555.so
           install -m 0755 petcam /usr/local/bin/petcam
-          PYTHONPATH=/opt/petcam/src python3 -c 'from petcam.infrastructure.streaming.live555 import Live555Server; Live555Server()'
           python3 scripts/smoke-test-installed-launcher.py

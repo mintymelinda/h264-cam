@@ -150,7 +150,7 @@ jobs:
           body: |
             H264 Cam for Raspberry Pi OS Lite (32-bit ARMHF), based on Raspberry Pi OS Trixie.
 
-            The image is built on an ARM GitHub Actions runner. The build decompresses the official Raspberry Pi OS image, enters its ARMHF userspace with QEMU, installs Git, clones this exact release tag, and runs the repository's top-level sudo ./install.sh. The finished compressed artifact is then extracted and its installed application and native Live555 library are verified.
+            The image is built on an ARM GitHub Actions runner. The build decompresses the official Raspberry Pi OS image, enters its ARMHF userspace with QEMU, installs Git, clones this exact release tag, and runs the repository's top-level sudo ./install.sh. The finished compressed artifact is then extracted and its installed application and GStreamer RTSP runtime are verified.
 
             /opt/petcam/build-info records the exact source commit, release version, and SHA-256 of the installer used during the build.
 
