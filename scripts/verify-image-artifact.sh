@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-IMAGE_ARCHIVE="\${1:-}"
-EXPECTED_VERSION="\${2:-}"
-EXPECTED_COMMIT="\${3:-}"
+IMAGE_ARCHIVE="${1:-}"
+EXPECTED_VERSION="${2:-}"
+EXPECTED_COMMIT="${3:-}"
 log() { printf '[petcam-artifact] %s\n' "$*"; }
 fail() { printf '[petcam-artifact] ERROR: %s\n' "$*" >&2; exit 1; }
 [[ "$EUID" -eq 0 ]] || fail "Run as root."
@@ -47,14 +47,14 @@ xz --decompress --stdout "$IMAGE_ARCHIVE" > "$IMAGE_FILE"
 [[ -s "$IMAGE_FILE" ]] || fail "Decompressed release image is empty."
 LOOP_DEVICE="$(losetup --find --show --partscan "$IMAGE_FILE")"
 for _ in $(seq 1 30); do
-  [[ -b "\${LOOP_DEVICE}p1" && -b "\${LOOP_DEVICE}p2" ]] && break
+  [[ -b "${LOOP_DEVICE}p1" && -b "${LOOP_DEVICE}p2" ]] && break
   udevadm settle || true
   sleep 1
 done
-[[ -b "\${LOOP_DEVICE}p1" && -b "\${LOOP_DEVICE}p2" ]] || fail "Release image does not contain expected boot and root partitions."
-[[ "$(blkid -s TYPE -o value "\${LOOP_DEVICE}p2")" == ext4 ]] || fail "Release root partition is not ext4."
+[[ -b "${LOOP_DEVICE}p1" && -b "${LOOP_DEVICE}p2" ]] || fail "Release image does not contain expected boot and root partitions."
+[[ "$(blkid -s TYPE -o value "${LOOP_DEVICE}p2")" == ext4 ]] || fail "Release root partition is not ext4."
 mkdir -p "$ROOTFS"
-mount "\${LOOP_DEVICE}p2" "$ROOTFS"
+mount "${LOOP_DEVICE}p2" "$ROOTFS"
 log "Checking provenance and installed PetCam files inside the compressed artifact."
 [[ -s "$ROOTFS/opt/petcam/build-info" ]] || fail "Image provenance file is missing."
 grep -Fxq "PETCAM_VERSION=$EXPECTED_VERSION" "$ROOTFS/opt/petcam/build-info" || fail "Image version does not match the release tag."
