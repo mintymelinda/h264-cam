@@ -26,8 +26,10 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      - name: Check out release source
+      - name: Check out the exact release tag
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
 
       - name: Resolve and validate release version
         id: version
@@ -51,7 +53,7 @@ jobs:
 
       - name: Validate release scripts
         run: |
-          bash -n release.sh build-image.sh install.sh
+          bash -n release.sh build-image.sh install.sh scripts/verify-image-artifact.sh
           python3 -m py_compile create-imager-manifest.py
 
       - name: Run Python unit tests
@@ -87,12 +89,14 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: H264 Cam ${{ steps.version.outputs.tag }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ steps.release.outputs.source_commit }}
           make_latest: true
           fail_on_unmatched_files: true
           overwrite_files: true
           body: |
             H264 Cam for Raspberry Pi OS Lite (32-bit ARMHF), based on Raspberry Pi OS Trixie.
+
+            The image contains `/opt/petcam/build-info` with the exact source commit, release version, and retained-installer SHA-256. Before publishing, the workflow mounts the compressed artifact again and runs the retained recovery installer from that extracted image.
 
             Assets:
             - Compressed Raspberry Pi OS image (.img.xz)
