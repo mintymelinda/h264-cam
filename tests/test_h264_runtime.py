@@ -222,8 +222,8 @@ class NativeCaptureTests(unittest.TestCase):
         ])
 
     def test_first_mb_in_slice_distinguishes_picture_start_from_continuation(self):
-        self.assertEqual(first_mb_in_slice(self.nal(0x65, b"\xe0")), 0)
-        self.assertEqual(first_mb_in_slice(self.nal(0x65, b"\x58")), 1)
+        self.assertEqual(first_mb_in_slice(b"\x00\x00\x00\x01\x65\xe0"), 0)
+        self.assertEqual(first_mb_in_slice(b"\x00\x00\x00\x01\x65\x58"), 1)
 
 class H264AccessUnitFramingTests(unittest.TestCase):
     @staticmethod
