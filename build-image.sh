@@ -166,11 +166,11 @@ run_chroot /bin/bash -e -c '
   test -x /opt/petcam/installer/petcam
   test -s /opt/petcam/installer/src/petcam/cli.py
   test -s /opt/petcam/installer/scripts/smoke-test-installed-launcher.py
+  test -s /opt/petcam/installer/scripts/smoke-test-installed-help.py
   test -x /usr/local/bin/petcam
   test -s /opt/petcam/src/petcam/cli.py
   test -s /opt/petcam/lib/libpetcam_live555.so
-  HELP_OUTPUT="$(/usr/local/bin/petcam -h 2>&1)"
-  grep -Fq "usage: petcam" <<< "$HELP_OUTPUT"
+  /usr/bin/python3 /opt/petcam/installer/scripts/smoke-test-installed-help.py
   TERM=xterm-256color /usr/bin/python3 /opt/petcam/installer/scripts/smoke-test-installed-launcher.py
 ' || fail "The final image root filesystem failed its installed-launcher or recovery-installer checks."
 
