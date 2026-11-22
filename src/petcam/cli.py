@@ -317,6 +317,7 @@ def run_stream(config: dict, stdscr) -> int:
         metrics = ResourceMetrics()
         stdscr.timeout(500)
         while True:
+            session.iterate()
             status = session.snapshot()
             if status["state"] == "error":
                 raise RuntimeError(status["message"] or "The GStreamer stream failed.")
