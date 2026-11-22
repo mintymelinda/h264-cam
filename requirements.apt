@@ -7,3 +7,4 @@ liblivemedia-dev
 g++
 libssl-dev
 avahi-daemon
+tmux
