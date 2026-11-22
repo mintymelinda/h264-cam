@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from unittest.mock import patch
 
@@ -101,6 +102,47 @@ class NativeCaptureTests(unittest.TestCase):
             for codec in ("ffmpeg", "gst", "x264", "openh264", "avdec")
         ))
 
+    def test_usb_capture_exposes_experimental_buffer_and_encoder_controls(self):
+        with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/v4l2-ctl"), patch.dict(
+            os.environ,
+            {
+                "PETCAM_V4L2_MMAP_BUFFERS": "8",
+                "PETCAM_V4L2_CONTROLS": "video_gop_size=30,video_bitrate=6000000",
+                "PETCAM_V4L2_STREAM_POLL": "1",
+            },
+        ):
+            command = build_capture_command(self.usb)
+        self.assertIn("--stream-mmap=8", command)
+        self.assertIn("--set-ctrl=video_gop_size=30,video_bitrate=6000000", command)
+        self.assertIn("--stream-poll", command)
+
+    def test_usb_capture_rejects_invalid_experimental_parameters(self):
+        with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/v4l2-ctl"), patch.dict(
+            os.environ, {"PETCAM_V4L2_MMAP_BUFFERS": "100"}
+        ):
+            with self.assertRaisesRegex(Live555Error, "PETCAM_V4L2_MMAP_BUFFERS"):
+                build_capture_command(self.usb)
+        with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/v4l2-ctl"), patch.dict(
+            os.environ, {"PETCAM_V4L2_CONTROLS": "video-gop-size=30"}
+        ):
+            with self.assertRaisesRegex(Live555Error, "comma-separated"):
+                build_capture_command(self.usb)
+
+    def test_csi_capture_exposes_experimental_gop_and_bitrate(self):
+        csi = {
+            "native_h264": True, "backend": "csi", "camera": 0,
+            "resolution": "1920x1080", "fps": 30,
+        }
+        with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/rpicam-vid"), patch(
+            "petcam.infrastructure.streaming.live555.detect_hardware_h264_encoder",
+            return_value={"available": True},
+        ), patch.dict(os.environ, {"PETCAM_CSI_INTRA": "15", "PETCAM_CSI_BITRATE": "10000000"}):
+            command = build_capture_command(csi)
+        self.assertIn("--intra", command)
+        self.assertEqual(command[command.index("--intra") + 1], "15")
+        self.assertIn("--bitrate", command)
+        self.assertEqual(command[command.index("--bitrate") + 1], "10000000")
+
     def test_non_native_source_is_rejected(self):
         with self.assertRaises(Live555Error):
             build_capture_command({**self.usb, "native_h264": False})
@@ -113,8 +155,8 @@ class NativeCaptureTests(unittest.TestCase):
         class FakeServer:
             def __init__(self):
                 self.nals = []
-            def push_nal(self, nal, keyframe=False):
-                self.nals.append((nal, keyframe))
+            def push_nal(self, nal, recovery_point=False):
+                self.nals.append((nal, recovery_point))
 
         server = FakeServer()
         publisher = H264Publisher(server)
@@ -129,10 +171,17 @@ class NativeCaptureTests(unittest.TestCase):
             (b"\x65\x88", False),
             (b"\x41\x9a", False),
         ])
+        self.assertEqual(
+            publisher.counter_snapshot(),
+            {
+                "captured": {"7": 1, "8": 1, "5": 1, "1": 1},
+                "queued": {"7": 1, "8": 1, "5": 1, "1": 1},
+            },
+        )
 
     def test_publisher_rejects_idr_without_parameter_sets(self):
         class FakeServer:
-            def push_nal(self, nal, keyframe=False):
+            def push_nal(self, nal, recovery_point=False):
                 raise AssertionError("Must not publish without SPS/PPS")
         with self.assertRaisesRegex(Live555Error, "SPS and PPS"):
             H264Publisher(FakeServer()).publish(b"\x00\x00\x00\x01\x65\x88")
