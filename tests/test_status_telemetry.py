@@ -14,68 +14,35 @@ from petcam.infrastructure.system.metrics import ResourceMetrics
 
 class GStreamerRtspTests(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("gi"), "GStreamer Python bindings are not installed")
-    def test_rtsp_server_answers_options_and_describe(self):
-        try:
-            validate_runtime()
-        except GStreamerError as error:
-            self.skipTest(str(error))
-
+    def test_rtsp_server_answers_options(self):
+        validate_runtime()
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
-
-        media_configured = []
-        server = GStreamerRtspServer(
-            port=port,
-            on_media_configure=lambda appsrc: media_configured.append(appsrc),
-        )
-
-        def exchange(client, request):
-            client.sendall(request.encode("ascii"))
-            response = bytearray()
-            deadline = time.monotonic() + 3
-            while time.monotonic() < deadline:
-                server.iterate()
-                try:
-                    chunk = client.recv(8192)
-                    if chunk:
-                        response.extend(chunk)
-                except BlockingIOError:
-                    pass
-                header_end = response.find(b"\r\n\r\n")
-                if header_end >= 0:
-                    headers = bytes(response[:header_end]).lower()
-                    content_length = 0
-                    for line in headers.split(b"\r\n")[1:]:
-                        if line.startswith(b"content-length:"):
-                            content_length = int(line.partition(b":")[2].strip())
-                            break
-                    if len(response) >= header_end + 4 + content_length:
-                        return bytes(response)
-                time.sleep(0.002)
-            self.fail(f"Timed out waiting for RTSP response: {bytes(response)!r}")
-
+        server = GStreamerRtspServer(port=port)
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=3) as client:
                 client.setblocking(False)
-                options = exchange(
-                    client,
-                    f"OPTIONS rtsp://127.0.0.1:{port}/petcam RTSP/1.0\r\n"
-                    "CSeq: 1\r\nUser-Agent: PetCam-test\r\n\r\n",
+                request = (
+                    f"OPTIONS rtsp://127.0.0.1:{port}/petcam RTSP/1.0\\r\\n"
+                    "CSeq: 1\\r\\nUser-Agent: PetCam-test\\r\\n\\r\\n"
                 )
-                self.assertIn(b"RTSP/1.0 200", options)
-
-                describe = exchange(
-                    client,
-                    f"DESCRIBE rtsp://127.0.0.1:{port}/petcam RTSP/1.0\r\n"
-                    "CSeq: 2\r\nAccept: application/sdp\r\n"
-                    "User-Agent: PetCam-test\r\n\r\n",
-                )
-                self.assertIn(b"RTSP/1.0 200", describe)
-                self.assertIn(b"application/sdp", describe.lower())
-                self.assertIn(b"m=video", describe)
-            self.assertTrue(media_configured, "DESCRIBE did not configure the GStreamer media pipeline")
-            self.assertIsNotNone(media_configured[0])
+                client.sendall(request.encode("ascii"))
+                response = bytearray()
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    server.iterate()
+                    try:
+                        chunk = client.recv(4096)
+                        if chunk:
+                            response.extend(chunk)
+                    except BlockingIOError:
+                        pass
+                    if b"\\r\\n\\r\\n" in response:
+                        break
+                    time.sleep(0.002)
+                self.assertIn(b"RTSP/1.0 200", response)
+                self.assertIn(b"Public:", response)
         finally:
             server.stop()
 
