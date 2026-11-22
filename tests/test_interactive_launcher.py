@@ -23,7 +23,7 @@ class InteractiveLauncherTests(unittest.TestCase):
     def test_smoke_test_recognizes_both_valid_screens(self):
         self.assertEqual(RENDERED_SCREEN(b"Choose capture mode"), "setup menu")
         self.assertEqual(
-            RENDERED_SCREEN(b"RTSP URL\\r\\nSTREAM STATUS"),
+            RENDERED_SCREEN(b"RTSP URL\r\nSTREAM STATUS"),
             "active-stream status monitor",
         )
         self.assertIsNone(RENDERED_SCREEN(b""))
