@@ -59,6 +59,39 @@ The RTSP endpoint is `rtsp://DEVICE-HOSTNAME.local:8554/petcam`. The installer i
 uses the system hostname with `.local`; set `PETCAM_ADVERTISE_HOST` to override it when
 using a different DNS name. The client must support mDNS/Bonjour name resolution.
 
+### Stream diagnostics and experimental capture settings
+
+The terminal status display separates NAL units seen from the camera, accepted into the
+Live555 queue, and handed to Live555's RTSP media source. Each stage reports IDR (NAL type 5)
+and non-IDR slice (NAL type 1) counts independently. RTSP-source counts are not a packet-level
+network acknowledgement; they show what Live555 handed to its RTP sink.
+
+Optional environment variables can be set before launching `petcam`:
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `PETCAM_V4L2_MMAP_BUFFERS` | `3` | USB V4L2 MMAP capture buffers (2–32) |
+| `PETCAM_V4L2_STREAM_POLL` | off | Add V4L2 non-blocking poll-based capture |
+| `PETCAM_V4L2_CONTROLS` | unset | Optional integer controls passed to `v4l2-ctl --set-ctrl`, e.g. `video_gop_size=30,video_bitrate=6000000` |
+| `PETCAM_CSI_INTRA` | `30` | CSI H.264 I-frame interval in frames |
+| `PETCAM_CSI_BITRATE` | `8000000` | CSI H.264 target bitrate in bits per second |
+| `PETCAM_LIVE555_FRAMER` | `stream` | Select `stream` (Annex-B byte-stream parser) or experimental `discrete` NAL framing |
+
+For example, to test the optional USB controls and a larger capture ring:
+
+```sh
+PETCAM_V4L2_MMAP_BUFFERS=8 \
+PETCAM_V4L2_CONTROLS='video_gop_size=30,video_bitrate=6000000' \
+petcam
+```
+
+V4L2 encoder controls are driver-specific and are **not** assumed to exist on every USB
+camera. Check that the selected device exposes the named controls before setting them;
+an unsupported control can cause capture startup to fail. The CSI GOP and bitrate settings
+apply only to `rpicam-vid` cameras. The discrete Live555 framer assumes each source item is a
+complete NAL unit; its access-unit marker is approximate for streams that split one picture
+across multiple slices, so it is an experiment rather than the default.
+
 USB H.264 is captured
 directly with V4L2; CSI H.264 is captured with `rpicam-vid`. Both paths pass Annex-B
 NAL units to Live555 without decoding or transcoding. New clients start at a cached
