@@ -208,6 +208,8 @@ class RTSPConnection:
                             f"(received {len(reconstructed)} bytes, expected {len(expected_nal)}, "
                             f"first mismatch at byte {mismatch})."
                         )
+                    if not marker:
+                        raise RTSPProbeError("The final FU-A packet did not carry the H.264 access-unit marker bit.")
                     return fragment_packets, len(reconstructed), timestamp
                 continue
 
@@ -224,7 +226,7 @@ def probe(
     url: str,
     timeout: float = 5.0,
     expected_nal: bytes | None = None,
-) -> tuple[int, int, int] | tuple[int, int]:
+) -> tuple[int, int, int]:
     connection = RTSPConnection(url, timeout)
     try:
         status, _, _ = connection.request("OPTIONS", url)
