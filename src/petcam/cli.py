@@ -447,6 +447,21 @@ def _remove_camera_marker() -> None:
         pass
 
 
+def _write_service_status(state: str, config: dict, message: str = "") -> None:
+    payload = {
+        "state": state,
+        "source": config["source"].lower(),
+        "resolution": config["resolution"],
+        "capture_fps": config["fps"],
+        "rtsp_clients": 0,
+        "updated_at": time.time(),
+        "message": message,
+    }
+    temporary = STREAM_STATUS.with_name(STREAM_STATUS.name + ".tmp")
+    temporary.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    os.replace(temporary, STREAM_STATUS)
+
+
 def run_service() -> int:
     saved = _read_saved_payload()
     if saved is None:
@@ -457,6 +472,7 @@ def run_service() -> int:
     os.chmod(RUN_DIR, 0o755)
     CAMERA_STATUS.unlink(missing_ok=True)
     STREAM_STATUS.unlink(missing_ok=True)
+    _write_service_status("starting", config)
 
     environment_keys = set(saved_environment) | {"PETCAM_RUN"}
     previous_environment = {
@@ -475,10 +491,20 @@ def run_service() -> int:
         from .infrastructure.streaming import live555
 
         result = live555.main(RUN_DIR)
+        if result not in (None, 0):
+            status = _read_status()
+            if status.get("state") != "error":
+                _write_service_status(
+                    "error",
+                    config,
+                    f"Live555 exited with status {result} before the RTSP stream became ready.",
+                )
         return 0 if result is None else result
+    except Exception as error:
+        _write_service_status("error", config, str(error))
+        raise
     finally:
         _remove_camera_marker()
-        STREAM_STATUS.unlink(missing_ok=True)
         for key, value in previous_environment.items():
             if value is None:
                 os.environ.pop(key, None)
