@@ -12,7 +12,6 @@ from ..camera.capture import build_capture_command
 RTSP_PORT = 8554
 RTSP_PATH = "/petcam"
 CAPTURE_READ_SIZE = 65536
-CAPTURE_START_TIMEOUT = 15.0
 
 # Keep Annex-B input as a byte stream. h264parse frames complete access units;
 # the bounded downstream queue drops whole access units when a client is slow.
@@ -20,7 +19,7 @@ RTSP_PIPELINE = (
     '( appsrc name=source is-live=true format=time do-timestamp=true '
     'min-latency=0 block=true max-bytes=1048576 '
     'caps="video/x-h264,stream-format=(string)byte-stream" '
-    '! h264parse config-interval=-1 '
+    '! h264parse '
     '! video/x-h264,stream-format=(string)byte-stream,alignment=(string)au '
     '! queue max-size-buffers=30 max-size-bytes=0 max-size-time=0 leaky=downstream '
     '! rtph264pay name=pay0 pt=96 config-interval=-1 aggregate-mode=none )'
@@ -62,13 +61,19 @@ def validate_runtime() -> None:
             "Missing GStreamer elements: " + ", ".join(missing)
             + ". Install the GStreamer base, good, and bad plugin packages."
         )
+    try:
+        pipeline = gst.parse_launch(RTSP_PIPELINE)
+        pipeline.set_state(gst.State.NULL)
+    except Exception as error:
+        raise GStreamerError(f"The GStreamer RTSP pipeline is invalid: {error}") from error
 
 
 class GStreamerRtspServer:
     """An in-process GStreamer RTSP server with one shared live media pipeline."""
 
-    def __init__(self, port: int = RTSP_PORT, path: str = RTSP_PATH):
+    def __init__(self, port: int = RTSP_PORT, path: str = RTSP_PATH, on_media_configure=None):
         self.GLib, self.Gst, self.GstRtspServer = _load_gstreamer()
+        self._media_configured_callback = on_media_configure
         validate_runtime()
         self._lock = threading.RLock()
         self._appsrc = None
@@ -141,6 +146,8 @@ class GStreamerRtspServer:
         with self._lock:
             self._appsrc = appsrc
             self._media_bus = bus
+        if self._media_configured_callback is not None:
+            self._media_configured_callback(appsrc)
 
     def _on_media_unprepared(self, _media, appsrc, bus) -> None:
         with self._lock:
@@ -178,7 +185,7 @@ class GStreamerRtspServer:
         buffer.fill(0, chunk)
         result = appsrc.emit("push-buffer", buffer)
         if result not in (self.Gst.FlowReturn.OK, self.Gst.FlowReturn.FLUSHING):
-            raise GStreamerError(f"GStreamer appsrc rejected camera data: {result.value_nick}.")
+            raise GStreamerError(f"GStreamer appsrc rejected camera data: {result!r}.")
 
     def stop(self) -> None:
         with self._lock:
@@ -220,45 +227,55 @@ class GStreamerSession:
         self._first_data = threading.Event()
         self._lock = threading.Lock()
         self._error = ""
+        self._capture_starting = False
         self._bytes_received = 0
         self._last_sample_bytes = 0
         self._last_sample_at = time.monotonic()
         self._bytes_per_second = 0.0
 
     def start(self) -> None:
-        self.server = GStreamerRtspServer()
         try:
-            self.capture = subprocess.Popen(
+            self.server = GStreamerRtspServer(on_media_configure=self._start_capture)
+        except Exception:
+            self.stop()
+            raise
+
+    def _start_capture(self, _appsrc) -> None:
+        """Start camera output only once the RTSP media pipeline is ready to consume it."""
+        with self._lock:
+            if self._stop.is_set() or self.capture is not None or self._capture_starting:
+                return
+            self._capture_starting = True
+
+        try:
+            process = subprocess.Popen(
                 self.command,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 bufsize=0,
             )
-            self.reader = threading.Thread(
-                target=self._read_capture, name="petcam-camera-capture", daemon=True
-            )
-            self.reader.start()
-            deadline = time.monotonic() + CAPTURE_START_TIMEOUT
-            while time.monotonic() < deadline:
-                with self._lock:
-                    error = self._error
-                if error:
-                    raise GStreamerError(error)
-                if self.server.error:
-                    raise GStreamerError(self.server.error)
-                if self.capture.poll() is not None:
-                    raise GStreamerError(
-                        f"Camera capture exited with status {self.capture.returncode}."
+            with self._lock:
+                self._capture_starting = False
+                should_stop = self._stop.is_set()
+                if not should_stop:
+                    self.capture = process
+                    self.reader = threading.Thread(
+                        target=self._read_capture, name="petcam-camera-capture", daemon=True
                     )
-                if self._first_data.wait(0.05):
-                    return
-            raise GStreamerError(
-                f"Camera did not produce H.264 data within {CAPTURE_START_TIMEOUT:g} seconds."
-            )
-        except Exception:
-            self.stop()
-            raise
+                    reader = self.reader
+            if should_stop:
+                process.terminate()
+                process.wait(timeout=5)
+                if process.stdout is not None:
+                    process.stdout.close()
+                return
+            reader.start()
+        except Exception as error:
+            with self._lock:
+                self._capture_starting = False
+                self._error = str(error)
+
 
     def _read_capture(self) -> None:
         assert self.capture is not None and self.capture.stdout is not None
@@ -292,8 +309,16 @@ class GStreamerSession:
             error = self._error
             total = self._bytes_received
             rate = self._bytes_per_second
+        if error:
+            state = "error"
+        elif self._first_data.is_set():
+            state = "ready"
+        elif self.capture is not None or self._capture_starting:
+            state = "starting"
+        else:
+            state = "waiting for client"
         return {
-            "state": "error" if error else ("ready" if self._first_data.is_set() else "starting"),
+            "state": state,
             "message": error,
             "clients": self.server.client_count if self.server else 0,
             "capture_bytes_per_second": rate,

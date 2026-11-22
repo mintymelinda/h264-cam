@@ -83,7 +83,7 @@ the camera's encoded H.264 data is passed through. The RTP payloader is configur
 repeat available SPS/PPS parameter sets with every IDR frame. The downstream queue is
 bounded so a slow client does not make latency grow without limit.
 
-The terminal display reports RTSP readiness, connected clients, received camera-data rate,
+The GStreamer listener starts with the terminal UI; native camera capture begins when an RTSP client requests the media pipeline. The terminal display reports listener state, connected clients, received camera-data rate,
 and system resource usage. It does not claim that bytes read from the camera have been
 acknowledged by a remote client.
 

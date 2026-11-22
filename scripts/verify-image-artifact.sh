@@ -103,7 +103,7 @@ run_chroot /bin/bash -e -c '
   test "$VERSION_CODENAME" = trixie
   test -s /opt/petcam/build-info
   test -s /opt/petcam/src/petcam/cli.py
-  test -s /opt/petcam/lib/libpetcam_live555.so
+  test -s /opt/petcam/src/petcam/infrastructure/streaming/gstreamer.py
   test -x /usr/local/bin/petcam
   /usr/local/bin/petcam -h
   PYTHONPATH=/opt/petcam/src /usr/bin/python3 -c "from petcam.infrastructure.streaming.gstreamer import validate_runtime; validate_runtime(); print(\"GStreamer RTSP runtime loaded successfully.\")"
