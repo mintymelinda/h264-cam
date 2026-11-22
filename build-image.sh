@@ -5,6 +5,7 @@ REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_DIR="${1:-$REPO_ROOT/dist/image}"
 RASPIOS_IMAGE_URL="${PETCAM_RASPIOS_IMAGE_URL:-https://downloads.raspberrypi.com/raspios_lite_armhf_latest}"
 VERSION="${PETCAM_VERSION:-development}"
+SOURCE_COMMIT="${PETCAM_SOURCE_COMMIT:-unknown}"
 
 log() { printf '[petcam-image] %s\n' "$*"; }
 fail() { printf '[petcam-image] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -36,6 +37,7 @@ run_chroot() {
 }
 
 [[ "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || fail "Invalid image version."
+[[ "$SOURCE_COMMIT" == "unknown" || "$SOURCE_COMMIT" =~ ^[a-fA-F0-9]{40}$ ]] || fail "Source commit must be a full 40-character Git SHA."
 
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
@@ -160,6 +162,11 @@ PETCAM_INSTALL_WRAPPER
 cmp -s "$EXPECTED_WRAPPER" "$ROOTFS/opt/petcam/install.sh" || fail "The on-device recovery wrapper contents are incorrect."
 rm -rf "$ROOTFS/tmp/petcam-installer"
 
+INSTALLER_SHA256="$(sha256sum "$REPO_ROOT/install.sh" | awk '{print $1}')"
+install -d -m 0755 "$ROOTFS/opt/petcam"
+printf 'PETCAM_VERSION=%s\nSOURCE_COMMIT=%s\nINSTALLER_SHA256=%s\n' "$VERSION" "$SOURCE_COMMIT" "$INSTALLER_SHA256" > "$ROOTFS/opt/petcam/build-info"
+chmod 0644 "$ROOTFS/opt/petcam/build-info"
+
 if (( RESOLV_REPLACED )); then
   rm -f "$ROOTFS/etc/resolv.conf"
   if [[ -n "$RESOLV_LINK" ]]; then ln -s "$RESOLV_LINK" "$ROOTFS/etc/resolv.conf"; elif (( RESOLV_WAS_REGULAR )); then cp -a "$RESOLV_BACKUP" "$ROOTFS/etc/resolv.conf"; fi
@@ -186,6 +193,10 @@ run_chroot /bin/bash -e -c '
   test -x /usr/local/bin/petcam
   test -s /opt/petcam/src/petcam/cli.py
   test -s /opt/petcam/lib/libpetcam_live555.so
+  test -s /opt/petcam/build-info
+  grep -Fxq "PETCAM_VERSION=$VERSION" /opt/petcam/build-info
+  grep -Fxq "SOURCE_COMMIT=$SOURCE_COMMIT" /opt/petcam/build-info
+  grep -Fxq "INSTALLER_SHA256=$INSTALLER_SHA256" /opt/petcam/build-info
   /usr/bin/python3 /opt/petcam/installer/scripts/smoke-test-installed-help.py
   TERM=xterm-256color /usr/bin/python3 /opt/petcam/installer/scripts/smoke-test-installed-launcher.py
 ' || fail "The final image root filesystem failed its installed-launcher or recovery-installer checks."
