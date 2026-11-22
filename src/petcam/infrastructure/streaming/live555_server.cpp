@@ -73,7 +73,7 @@ private:
               [this](const Nal& n) { return n.seq >= cursor_; });
             if (it != queue.end()) {
               if (it->seq != cursor_) {
-                it = std::find_if(it, queue.end(), [](const Nal& n) { return n.key; });
+                it = std::find_if(it, queue.end(), [](const Nal& n) { return n.recoveryPoint; });
                 if (it == queue.end()) cursorSet_ = false;
               }
               if (cursorSet_ && it != queue.end()) {
