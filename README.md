@@ -41,7 +41,8 @@ petcam
 
 Once the status screen appears, you can close SSH immediately. The stream continues running.
 When you reconnect, run `petcam` again to attach to the active stream's status screen.
-Press `q` there when you actually want to stop the stream.
+Press `q` there when you actually want to stop the stream. If installation added your login
+account to the `video` group, log out and back in once before starting PetCam.
 
 The selected camera mode and supported capture environment options are saved under
 `/var/lib/petcam/`. The service is not enabled for automatic startup after a reboot; run
