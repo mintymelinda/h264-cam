@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: h264-cam-release-${{ github.ref }}
+  group: h264-cam-release-${{ inputs.release_tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
