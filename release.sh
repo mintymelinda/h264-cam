@@ -25,7 +25,7 @@ SOURCE_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 IMAGE_URL="$RELEASE_BASE_URL/$IMAGE_NAME"
 
 log "Building the final Raspberry Pi OS Lite Trixie ARMHF image ($VERSION)."
-PETCAM_VERSION="$VERSION" PETCAM_SOURCE_COMMIT="$SOURCE_COMMIT" "$REPO_ROOT/build-image.sh" "$OUTPUT_DIR"
+PETCAM_VERSION="$VERSION" PETCAM_SOURCE_COMMIT="$SOURCE_COMMIT" PETCAM_SOURCE_REF="$VERSION" "$REPO_ROOT/build-image.sh" "$OUTPUT_DIR"
 
 [[ -s "$IMAGE_PATH" ]] || fail "Expected final image was not produced: $IMAGE_PATH"
 [[ -s "$CHECKSUM_PATH" ]] || fail "Image checksum sidecar was not produced: $CHECKSUM_PATH"
