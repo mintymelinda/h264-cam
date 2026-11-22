@@ -295,6 +295,9 @@ class GStreamerSession:
             error = self._error
             total = self._bytes_received
             rate = self._bytes_per_second
+        server_error = self.server.error if self.server is not None else ""
+        if not error and server_error:
+            error = server_error
         if error:
             state = "error"
         elif self._first_data.is_set():
