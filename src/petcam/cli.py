@@ -418,6 +418,8 @@ def run_stream(config: dict, stdscr) -> int:
             output_rate = status.get("streamed_nals_per_second")
             if status_stale or not isinstance(output_rate, (int, float)):
                 output_text = "Status unavailable"
+            elif not isinstance(clients, int):
+                output_text = "Client count unavailable"
             elif clients < 1:
                 output_text = "Waiting for RTSP client"
             else:
