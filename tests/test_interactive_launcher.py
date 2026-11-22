@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import pty
+import runpy
 import select
 import signal
 import sys
@@ -13,9 +14,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+SMOKE_TEST = runpy.run_path(str(ROOT / "scripts" / "smoke-test-installed-launcher.py"))
+RENDERED_SCREEN = SMOKE_TEST["rendered_screen"]
+
+
 @unittest.skipUnless(hasattr(pty, "fork"), "requires POSIX pseudo-terminals")
 class InteractiveLauncherTests(unittest.TestCase):
-    def test_launcher_enters_and_remains_in_configuration_ui(self):
+    def test_smoke_test_recognizes_both_valid_screens(self):
+        self.assertEqual(RENDERED_SCREEN(b"Choose capture mode"), "setup menu")
+        self.assertEqual(
+            RENDERED_SCREEN(b"RTSP URL\r\nSTREAM STATUS"),
+            "active-stream status monitor",
+        )
+        self.assertIsNone(RENDERED_SCREEN(b""))
+
+    def test_launcher_enters_and_remains_in_interactive_ui(self):
         child_pid, terminal_fd = pty.fork()
         if child_pid == 0:
             environment = os.environ.copy()
@@ -44,19 +57,20 @@ class InteractiveLauncherTests(unittest.TestCase):
                 if waited_pid == child_pid:
                     status = waited_status
                     break
-                if b"Choose capture mode" in output:
+                if RENDERED_SCREEN(output) is not None:
                     break
 
-            self.assertTrue(
-                b"Choose capture mode" in output,
-                "launcher did not render the configuration menu; output was "
+            screen = RENDERED_SCREEN(output)
+            self.assertIsNotNone(
+                screen,
+                "launcher did not render the setup menu or active-stream monitor; output was "
                 + repr(output.decode("utf-8", "replace")),
             )
             waited_pid, waited_status = os.waitpid(child_pid, os.WNOHANG)
             self.assertEqual(
                 waited_pid,
                 0,
-                "launcher returned immediately instead of remaining interactive",
+                f"launcher returned immediately after rendering {screen}",
             )
         finally:
             if status is None:

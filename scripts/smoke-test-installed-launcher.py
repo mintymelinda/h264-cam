@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the installed PetCam command opens and remains in its interactive setup UI."""
+"""Verify the installed PetCam command opens and remains in an interactive UI."""
 
 from __future__ import annotations
 
@@ -11,9 +11,18 @@ import sys
 import time
 
 LAUNCHER = "/usr/local/bin/petcam"
-EXPECTED = b"Choose capture mode"
+SETUP_SCREEN = b"Choose capture mode"
+MONITOR_SCREEN_MARKERS = (b"RTSP URL", b"STREAM STATUS")
 START_TIMEOUT = 8.0
 STABLE_UI_SECONDS = 1.5
+
+
+def rendered_screen(output: bytes) -> str | None:
+    if SETUP_SCREEN in output:
+        return "setup menu"
+    if all(marker in output for marker in MONITOR_SCREEN_MARKERS):
+        return "active-stream status monitor"
+    return None
 
 
 def main() -> int:
@@ -36,7 +45,7 @@ def main() -> int:
     status = None
     deadline = time.monotonic() + START_TIMEOUT
     try:
-        while time.monotonic() < deadline and EXPECTED not in output:
+        while time.monotonic() < deadline and rendered_screen(output) is None:
             readable, _, _ = select.select([master_fd], [], [], 0.1)
             if readable:
                 try:
@@ -52,10 +61,11 @@ def main() -> int:
                 status = child_status
                 break
 
-        if EXPECTED not in output:
+        screen = rendered_screen(output)
+        if screen is None:
             detail = output.decode("utf-8", "replace")
             print(
-                "installed petcam did not render its setup menu; "
+                "installed petcam did not render its setup menu or active-stream monitor; "
                 f"exit={status!r}; terminal output={detail!r}",
                 file=sys.stderr,
             )
@@ -79,12 +89,12 @@ def main() -> int:
 
         if status is not None:
             print(
-                f"installed petcam exited after rendering its menu: status={status}",
+                f"installed petcam exited after rendering its {screen}: status={status}",
                 file=sys.stderr,
             )
             return 1
 
-        print("installed /usr/local/bin/petcam rendered its setup menu and remained interactive")
+        print(f"installed /usr/local/bin/petcam rendered its {screen} and remained interactive")
         return 0
     finally:
         if status is None:
