@@ -28,8 +28,10 @@ raise SystemExit(0 if Gst.ElementFactory.find("h264parse") is not None else 1)
 PY
 }
 
-if parser_available; then
-  log "GStreamer h264parse is already available."
+full_plugin_status="$(dpkg-query -W -f='${Status}' gstreamer1.0-plugins-bad 2>/dev/null || true)"
+if [[ "$full_plugin_status" == "install ok installed" ]]; then
+  parser_available || fail "The full GStreamer plugins-bad package is installed but h264parse is unavailable."
+  log "The system GStreamer plugins-bad package already provides h264parse."
   exit 0
 fi
 
@@ -57,6 +59,11 @@ done
 plugin_version="$(dpkg-deb -f "$plugin_deb" Version)"
 codec_version="$(dpkg-deb -f "$codec_deb" Version)"
 [[ "$plugin_version" == "$codec_version" ]] || fail "The parser plugin and codec library package versions do not match."
+installed_version="$(dpkg-query -W -f='${Version}' petcam-gstreamer-h264parse 2>/dev/null || true)"
+if [[ "$installed_version" == "$plugin_version" ]] && parser_available; then
+  log "The minimal GStreamer H.264 parser package is already current ($plugin_version)."
+  exit 0
+fi
 
 plugin_root="$work_dir/plugin"
 codec_root="$work_dir/codec"
