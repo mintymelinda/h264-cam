@@ -206,8 +206,16 @@ class RTSPConnection:
 
                 if fragments is None:
                     continue  # Ignore fragments belonging to an earlier NAL.
-                if sequence != ((previous_sequence + 1) & 0xFFFF):
-                    raise RTSPProbeError("RTP sequence gap inside a fragmented H.264 NAL.")
+                expected_sequence = (previous_sequence + 1) & 0xFFFF
+                if sequence != expected_sequence:
+                    raise RTSPProbeError(
+                        "RTP sequence gap inside a fragmented H.264 NAL: "
+                        f"previous={previous_sequence}, expected={expected_sequence}, "
+                        f"received={sequence}, fragment_index={fragment_packets}, "
+                        f"previous_timestamp={fragment_timestamp}, current_timestamp={timestamp}, "
+                        f"FU_start={int(start)}, FU_end={int(end)}, "
+                        f"marker={marker}, payload_bytes={len(payload)}."
+                    )
                 if timestamp != fragment_timestamp:
                     raise RTSPProbeError("RTP timestamp changed inside a fragmented H.264 NAL.")
                 fragments.extend(payload[2:])
