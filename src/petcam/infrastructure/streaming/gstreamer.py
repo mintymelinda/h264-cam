@@ -97,11 +97,8 @@ class GStreamerRtspServer:
             raise GStreamerError(f"Unable to bind the GStreamer RTSP server to port {port}.")
 
     def iterate(self) -> None:
-        """Dispatch ready RTSP/GLib sources from the foreground terminal loop."""
-        for _ in range(64):
-            if not self._context.pending():
-                break
-            self._context.iteration(False)
+        """Poll RTSP/GLib sources without blocking the foreground terminal loop."""
+        self._context.iteration(False)
 
     @property
     def error(self) -> str:
