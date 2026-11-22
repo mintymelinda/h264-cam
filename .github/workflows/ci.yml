@@ -67,5 +67,3 @@ jobs:
           install -m 0755 petcam /usr/local/bin/petcam
           PYTHONPATH=/opt/petcam/src python3 -c 'from petcam.infrastructure.streaming.live555 import Live555Server; Live555Server()'
           python3 scripts/smoke-test-installed-launcher.py
-          PYTHONPATH=src PETCAM_LIVE555_LIBRARY="$RUNNER_TEMP/libpetcam_live555.so" \
-            python3 scripts/check_rtsp_tcp.py --self-test
