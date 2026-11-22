@@ -19,9 +19,11 @@ On a supported Raspberry Pi OS installation:
 sudo ./install.sh
 ```
 
-The installer installs the GStreamer RTSP Server Python bindings and the GStreamer H.264
-parser and RTP payloader from Raspberry Pi OS packages. It does not compile or install a
-separate native RTSP server.
+The installer installs the GStreamer RTSP Server Python bindings, the base/good runtime
+plugins, and a small package containing only the H.264 parser plugin and its codec-parser
+library. It deliberately does not install the full GStreamer plugins-bad bundle, which
+would pull in unrelated codecs and graphics libraries. No separate native RTSP server is
+compiled or installed.
 
 Run the guided terminal workflow:
 

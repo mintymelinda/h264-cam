@@ -59,7 +59,7 @@ def validate_runtime() -> None:
     if missing:
         raise GStreamerError(
             "Missing GStreamer elements: " + ", ".join(missing)
-            + ". Install the GStreamer base, good, and bad plugin packages."
+            + ". Install the GStreamer base/good plugins and PetCam's minimal h264parse package."
         )
     try:
         pipeline = gst.parse_launch(RTSP_PIPELINE)
