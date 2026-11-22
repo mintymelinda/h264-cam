@@ -19,15 +19,29 @@ On a supported Raspberry Pi OS installation:
 sudo ./install.sh
 ```
 
-The installer uses the Live555 packages provided by Raspberry Pi OS, compiles the native
-RTSP/RTP server against the system libraries, then removes the compiler and development
-headers. No GStreamer or Python package dependencies are required.
+The installer uses the Live555 packages provided by Raspberry Pi OS and compiles the native
+RTSP/RTP server against the system libraries. The compiler and development packages remain
+installed; the installer deliberately does not run package autoremove. No GStreamer or PyPI
+dependencies are required.
 
 Run the guided terminal workflow:
 
 ```sh
 petcam
 ```
+
+## Repair an installed image
+
+The prebuilt image retains the complete installer source tree at
+`/opt/petcam/installer/` and provides a convenience entry point at
+`/opt/petcam/install.sh`. To reinstall the application and rebuild its native Live555
+library from the retained source:
+
+```sh
+sudo /opt/petcam/install.sh
+```
+
+The recovery installer does not require cloning the repository or downloading another image.
 
 To select a camera mode directly:
 

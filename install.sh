@@ -15,6 +15,7 @@ fi
 grep -Fq 'exec /usr/bin/python3 -m petcam.cli' "$REPO_ROOT/petcam" || fail "The PetCam launcher source does not invoke the application CLI."
 [[ -f "$REPO_ROOT/src/petcam/infrastructure/streaming/live555_server.cpp" ]] || fail "Live555 installer source files are missing."
 [[ -s "$REPO_ROOT/scripts/smoke-test-installed-launcher.py" ]] || fail "The installed-launcher pseudo-terminal smoke test is missing."
+[[ -s "$REPO_ROOT/scripts/smoke-test-installed-help.py" ]] || fail "The exact installed-help smoke test is missing."
 package_arch="$(dpkg --print-architecture)"
 [[ "$package_arch" == "armhf" ]] || fail "PetCam requires ARMHF; detected '$package_arch'."
 long_bits="$(getconf LONG_BIT)"
@@ -103,6 +104,10 @@ if ! grep -Fq "usage: petcam" <<< "$HELP_OUTPUT"; then
 fi
 mv -f "$LAUNCHER_TMP" /usr/local/bin/petcam
 [[ -s /usr/local/bin/petcam && -x /usr/local/bin/petcam ]] || fail "The PetCam command launcher was not installed correctly."
+log "Verifying the installed command's exact help output."
+if ! /usr/bin/python3 "$REPO_ROOT/scripts/smoke-test-installed-help.py"; then
+  fail "The installed /usr/local/bin/petcam -h output did not match exactly."
+fi
 log "Verifying the installed command opens the interactive setup UI."
 if ! TERM=xterm-256color /usr/bin/python3 "$REPO_ROOT/scripts/smoke-test-installed-launcher.py"; then
   fail "The installed /usr/local/bin/petcam command did not remain interactive."
