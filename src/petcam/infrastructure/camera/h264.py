@@ -99,7 +99,7 @@ def _nal_header(nal: bytes) -> tuple[int, int]:
     return offset, nal[offset] & 0x1F
 
 
-def _first_mb_in_slice(nal: bytes) -> int | None:
+def first_mb_in_slice(nal: bytes) -> int | None:
     """Read only first_mb_in_slice; no video decoding or codec conversion occurs."""
     offset, nal_type = _nal_header(nal)
     if nal_type not in (1, 2, 5):
@@ -177,7 +177,7 @@ class H264AccessUnitFramer:
                 continue
 
             if nal_type in (1, 2, 5):  # Coded slice; first_mb==0 starts a new picture.
-                first_mb = _first_mb_in_slice(nal)
+                first_mb = first_mb_in_slice(nal)
                 if self.has_vcl and first_mb == 0:
                     previous = self._take_access_unit()
                     if previous is not None:
