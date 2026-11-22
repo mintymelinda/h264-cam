@@ -151,12 +151,12 @@ class NativeCaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(Live555Error, "backend"):
             build_capture_command({**self.usb, "backend": "network"})
 
-    def test_publisher_caches_parameter_sets_and_marks_idr_boundary(self):
+    def test_publisher_marks_only_the_idr_nal(self):
         class FakeServer:
             def __init__(self):
                 self.nals = []
-            def push_nal(self, nal, recovery_point=False):
-                self.nals.append((nal, recovery_point))
+            def push_nal(self, nal, is_idr=False):
+                self.nals.append((nal, is_idr))
 
         server = FakeServer()
         publisher = H264Publisher(server)
@@ -166,9 +166,9 @@ class NativeCaptureTests(unittest.TestCase):
         publisher.publish(prefix + b"\x65\x88")
         publisher.publish(prefix + b"\x41\x9a")
         self.assertEqual(server.nals, [
-            (b"\x67\x42\x00\x1e", True),
+            (b"\x67\x42\x00\x1e", False),
             (b"\x68\xce\x06", False),
-            (b"\x65\x88", False),
+            (b"\x65\x88", True),
             (b"\x41\x9a", False),
         ])
         self.assertEqual(
@@ -181,7 +181,7 @@ class NativeCaptureTests(unittest.TestCase):
 
     def test_publisher_rejects_idr_without_parameter_sets(self):
         class FakeServer:
-            def push_nal(self, nal, recovery_point=False):
+            def push_nal(self, nal, is_idr=False):
                 raise AssertionError("Must not publish without SPS/PPS")
         with self.assertRaisesRegex(Live555Error, "SPS and PPS"):
             H264Publisher(FakeServer()).publish(b"\x00\x00\x00\x01\x65\x88")
