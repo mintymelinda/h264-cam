@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the installed PetCam command opens its interactive setup UI."""
+"""Verify the installed PetCam command opens and remains in its interactive setup UI."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import time
 LAUNCHER = "/usr/local/bin/petcam"
 EXPECTED = b"Choose capture mode"
 START_TIMEOUT = 8.0
+STABLE_UI_SECONDS = 1.5
 
 
 def main() -> int:
@@ -35,7 +36,7 @@ def main() -> int:
     status = None
     deadline = time.monotonic() + START_TIMEOUT
     try:
-        while time.monotonic() < deadline:
+        while time.monotonic() < deadline and EXPECTED not in output:
             readable, _, _ = select.select([master_fd], [], [], 0.1)
             if readable:
                 try:
@@ -45,8 +46,6 @@ def main() -> int:
                 if not chunk:
                     break
                 output.extend(chunk)
-                if EXPECTED in output:
-                    break
 
             waited, child_status = os.waitpid(pid, os.WNOHANG)
             if waited == pid:
@@ -62,9 +61,23 @@ def main() -> int:
             )
             return 1
 
-        waited, child_status = os.waitpid(pid, os.WNOHANG)
-        if waited == pid:
-            status = child_status
+        stable_deadline = time.monotonic() + STABLE_UI_SECONDS
+        while time.monotonic() < stable_deadline:
+            readable, _, _ = select.select([master_fd], [], [], 0.1)
+            if readable:
+                try:
+                    chunk = os.read(master_fd, 65536)
+                except OSError:
+                    chunk = b""
+                if not chunk:
+                    break
+                output.extend(chunk)
+            waited, child_status = os.waitpid(pid, os.WNOHANG)
+            if waited == pid:
+                status = child_status
+                break
+
+        if status is not None:
             print(
                 f"installed petcam exited after rendering its menu: status={status}",
                 file=sys.stderr,
