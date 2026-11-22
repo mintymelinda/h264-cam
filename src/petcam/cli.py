@@ -447,12 +447,16 @@ def _remove_camera_marker() -> None:
         pass
 
 
-def _write_service_status(state: str, config: dict, message: str = "") -> None:
+def _write_service_status(
+    state: str, config: dict | None, message: str = ""
+) -> None:
+    config = config or {}
+    source = config.get("source")
     payload = {
         "state": state,
-        "source": config["source"].lower(),
-        "resolution": config["resolution"],
-        "capture_fps": config["fps"],
+        "source": source.lower() if isinstance(source, str) else None,
+        "resolution": config.get("resolution"),
+        "capture_fps": config.get("fps"),
         "rtsp_clients": 0,
         "updated_at": time.time(),
         "message": message,
@@ -465,7 +469,9 @@ def _write_service_status(state: str, config: dict, message: str = "") -> None:
 def run_service() -> int:
     saved = _read_saved_payload()
     if saved is None:
-        raise RuntimeError(f"No valid saved camera configuration exists at {CONFIG_FILE}.")
+        message = f"No valid saved camera configuration exists at {CONFIG_FILE}."
+        _write_service_status("error", None, message)
+        raise RuntimeError(message)
     config, saved_environment = saved
 
     RUN_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
