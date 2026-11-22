@@ -44,7 +44,7 @@ class StreamStatusTelemetryTests(unittest.TestCase):
         meminfo = (
             "MemTotal:       438272 kB\nMemAvailable:   327680 kB\n"
         )
-        responses = iter(proc_stat + [meminfo, meminfo])
+        responses = iter([proc_stat[0], meminfo, proc_stat[1], meminfo])
 
         def fake_open(*args, **kwargs):
             return StringIO(next(responses))
