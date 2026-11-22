@@ -157,12 +157,12 @@ class H264AccessUnitFramingTests(unittest.TestCase):
 
     def test_large_nal_is_scanned_incrementally_across_pipe_reads(self):
         prefix = b"\x00\x00\x00\x01"
-        first_nal = prefix + b"\x65" + b"x" * 65536
+        first_nal = prefix + b"\x65" + b"x" * 131072
         framer = AnnexBNalFramer()
 
-        self.assertEqual(framer.feed(first_nal), [])
+        self.assertEqual(framer.feed(first_nal[:65541]), [])
         previous_offset = framer._scan_offset
-        self.assertEqual(framer.feed(b"x" * 65536), [])
+        self.assertEqual(framer.feed(first_nal[65541:]), [])
         self.assertGreater(framer._scan_offset, previous_offset)
 
         output = []
