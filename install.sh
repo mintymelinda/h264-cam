@@ -57,7 +57,7 @@ chmod 0755 "$APP_ROOT/lib/libpetcam_live555.so"
 log "Removing compiler and development headers while retaining Live555 runtime libraries."
 apt-get purge -y g++ liblivemedia-dev libssl-dev
 apt-get autoremove -y
-LAUNCHER_TMP="/usr/local/bin/.petcam.$"
+LAUNCHER_TMP="/usr/local/bin/.petcam.${BASHPID}"
 log "Installing and validating the PetCam command launcher."
 install -m 0755 "$REPO_ROOT/petcam" "$LAUNCHER_TMP"
 if ! cmp -s "$REPO_ROOT/petcam" "$LAUNCHER_TMP" || ! "$LAUNCHER_TMP" -h >/dev/null; then
