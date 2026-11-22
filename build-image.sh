@@ -141,21 +141,21 @@ run_chroot /usr/bin/env SOURCE_COMMIT="$SOURCE_COMMIT" SOURCE_REF="$SOURCE_REF" 
   test "$VERSION_CODENAME" = trixie
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git sudo ca-certificates
-  rm -rf /tmp/petcam-source
-  GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "$SOURCE_REF" --single-branch "$SOURCE_REPOSITORY" /tmp/petcam-source
-  actual_commit="$(git -C /tmp/petcam-source rev-parse HEAD)"
+  install -d -m 0755 /opt/petcam
+  rm -rf /opt/petcam/source
+  GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "$SOURCE_REF" --single-branch "$SOURCE_REPOSITORY" /opt/petcam/source
+  actual_commit="$(git -C /opt/petcam/source rev-parse HEAD)"
   test "$actual_commit" = "$SOURCE_COMMIT"
-  cd /tmp/petcam-source
+  cd /opt/petcam/source
   sudo ./install.sh
 ' || fail "The real Git clone and top-level install.sh process failed inside the Raspberry Pi OS Trixie ARMHF environment."
 
-INSTALLER_SHA256="$(sha256sum "$ROOTFS/tmp/petcam-source/install.sh" | awk '{print $1}')"
+INSTALLER_SHA256="$(sha256sum "$ROOTFS/opt/petcam/source/install.sh" | awk '{print $1}')"
 [[ "$INSTALLER_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || fail "Could not calculate the cloned install.sh checksum."
-log "Recording exact build provenance and removing the temporary source checkout."
+log "Recording exact build provenance; retaining the cloned release source for on-device recovery."
 install -d -m 0755 "$ROOTFS/opt/petcam"
 printf 'PETCAM_VERSION=%s\nSOURCE_COMMIT=%s\nINSTALLER_SHA256=%s\n' "$VERSION" "$SOURCE_COMMIT" "$INSTALLER_SHA256" > "$ROOTFS/opt/petcam/build-info"
 chmod 0644 "$ROOTFS/opt/petcam/build-info"
-rm -rf "$ROOTFS/tmp/petcam-source"
 
 if (( RESOLV_REPLACED )); then
   rm -f "$ROOTFS/etc/resolv.conf"
