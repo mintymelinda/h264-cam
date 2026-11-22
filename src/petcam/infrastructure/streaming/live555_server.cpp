@@ -1,5 +1,4 @@
 #include <liveMedia.hh>
-#include <liveMedia_version.hh>
 #include <H264VideoStreamDiscreteFramer.hh>
 #include <BasicUsageEnvironment.hh>
 #include <GroupsockHelper.hh>
@@ -169,8 +168,6 @@ private:
   std::size_t currentNalOffset_ = 0;
 };
 
-#if LIVEMEDIA_LIBRARY_VERSION_INT >= 1780272000
-// Live555 2026.06 and newer split client connections from client sessions.
 class TcpOnlyRTSPClientSession final : public RTSPServer::RTSPClientSession {
 public:
   TcpOnlyRTSPClientSession(RTSPServer& server, u_int32_t sessionId)
@@ -215,57 +212,6 @@ protected:
     return new TcpOnlyRTSPClientSession(*this, sessionId);
   }
 };
-#else
-// Live555 versions through 2026.05 use the original client-session API.
-class TcpOnlyRTSPClientSession final : public RTSPServer::RTSPClientSession {
-public:
-  TcpOnlyRTSPClientSession(
-      RTSPServer& server,
-      unsigned sessionId,
-      int clientSocket,
-      struct sockaddr_in clientAddr)
-    : RTSPServer::RTSPClientSession(server, sessionId, clientSocket, clientAddr) {}
-  ~TcpOnlyRTSPClientSession() override = default;
-
-protected:
-  void handleCmd_SETUP(
-      char const* cseq,
-      char const* urlPreSuffix,
-      char const* urlSuffix,
-      char const* fullRequestStr) override {
-    const std::string request = petcam::forceRtpTcpTransport(
-      fullRequestStr == nullptr ? "" : fullRequestStr
-    );
-    RTSPServer::RTSPClientSession::handleCmd_SETUP(
-      cseq, urlPreSuffix, urlSuffix, request.c_str()
-    );
-  }
-};
-
-class TcpOnlyRTSPServer final : public RTSPServer {
-public:
-  ~TcpOnlyRTSPServer() override = default;
-
-  static RTSPServer* createNew(UsageEnvironment& env, Port port) {
-    const int socket = setUpOurSocket(env, port);
-    if (socket < 0) return nullptr;
-    return new TcpOnlyRTSPServer(env, socket, port);
-  }
-
-protected:
-  TcpOnlyRTSPServer(UsageEnvironment& env, int socket, Port port)
-    : RTSPServer(env, socket, port, nullptr, 65) {}
-
-  RTSPClientSession* createNewClientSession(
-      unsigned sessionId,
-      int clientSocket,
-      struct sockaddr_in clientAddr) override {
-    return new TcpOnlyRTSPClientSession(
-      *this, sessionId, clientSocket, clientAddr
-    );
-  }
-};
-#endif
 
 class H264Subsession final : public OnDemandServerMediaSubsession {
 public:
