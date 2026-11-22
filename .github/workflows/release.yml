@@ -26,6 +26,11 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
+      - name: Validate release scripts
+        run: |
+          bash -n release.sh build-image.sh install.sh
+          python3 -m py_compile create-imager-manifest.py
+
       - name: Run Python unit tests
         env:
           PYTHONPATH: src
