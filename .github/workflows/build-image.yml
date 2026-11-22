@@ -1,9 +1,9 @@
-name: Build Raspberry Pi OS image
+name: Build H264 Cam Raspberry Pi OS image
 
 on:
   push:
     branches:
-      - h264-only
+      - main
     paths:
       - ".github/workflows/build-image.yml"
       - "build-image.sh"
@@ -19,12 +19,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: petcam-image-h264-only
+  group: h264-cam-image-main
   cancel-in-progress: true
 
 jobs:
   build-image:
-    name: Build Raspberry Pi OS Trixie (ARMHF)
+    name: Build H264 Cam Raspberry Pi OS Trixie (ARMHF)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
 
@@ -71,7 +71,7 @@ jobs:
       - name: Upload compressed Raspberry Pi OS image and checksum
         uses: actions/upload-artifact@v6
         with:
-          name: petcam-trixie-armhf-image
+          name: h264-cam-trixie-armhf-image
           path: ${{ runner.temp }}/petcam-image/*.img.xz*
           if-no-files-found: error
           retention-days: 14
