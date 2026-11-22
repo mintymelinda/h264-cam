@@ -12,6 +12,9 @@ if EMPTY_PYTHON_FILE="$(find "$REPO_ROOT/src/petcam" -type f -name '*.py' -size 
   fail "PetCam Python source file is empty: $EMPTY_PYTHON_FILE"
 fi
 [[ -s "$REPO_ROOT/petcam" ]] || fail "The PetCam launcher source is empty."
+[[ -s "$REPO_ROOT/systemd/petcam.service" ]] || fail "The PetCam systemd service unit is missing."
+command -v systemctl >/dev/null 2>&1 || fail "systemctl is required to manage the persistent RTSP service."
+command -v visudo >/dev/null 2>&1 || fail "visudo is required to validate the PetCam service permissions."
 grep -Fq 'exec /usr/bin/python3 -m petcam.cli' "$REPO_ROOT/petcam" || fail "The PetCam launcher source does not invoke the application CLI."
 [[ -f "$REPO_ROOT/src/petcam/infrastructure/streaming/live555_server.cpp" ]] || fail "Live555 installer source files are missing."
 [[ -s "$REPO_ROOT/scripts/smoke-test-installed-launcher.py" ]] || fail "The installed-launcher pseudo-terminal smoke test is missing."
@@ -104,6 +107,28 @@ if ! grep -Fq "usage: petcam" <<< "$HELP_OUTPUT"; then
 fi
 mv -f "$LAUNCHER_TMP" /usr/local/bin/petcam
 [[ -s /usr/local/bin/petcam && -x /usr/local/bin/petcam ]] || fail "The PetCam command launcher was not installed correctly."
+
+log "Installing the persistent RTSP system service."
+getent group video >/dev/null 2>&1 || fail "The video group is required for camera access and service control."
+if [[ -n "\${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] && id "$SUDO_USER" >/dev/null 2>&1; then
+  usermod -aG video "$SUDO_USER"
+fi
+install -d -o root -g video -m 2770 /var/lib/petcam
+install -m 0644 "$REPO_ROOT/systemd/petcam.service" /etc/systemd/system/petcam.service
+SYSTEMCTL="$(command -v systemctl)"
+SUDOERS_TMP="$(mktemp /etc/sudoers.d/.petcam.XXXXXX)"
+printf '%%video ALL=(root) NOPASSWD: %s start petcam.service, %s stop petcam.service, %s restart petcam.service\\n' \
+  "$SYSTEMCTL" "$SYSTEMCTL" "$SYSTEMCTL" > "$SUDOERS_TMP"
+chmod 0440 "$SUDOERS_TMP"
+if ! visudo -cf "$SUDOERS_TMP"; then
+  rm -f "$SUDOERS_TMP"
+  fail "The PetCam system-service permissions failed sudoers validation."
+fi
+mv -f "$SUDOERS_TMP" /etc/sudoers.d/petcam
+if [[ -d /run/systemd/system ]]; then
+  systemctl daemon-reload
+fi
+
 log "Verifying the installed command's exact help output."
 if ! /usr/bin/python3 "$REPO_ROOT/scripts/smoke-test-installed-help.py"; then
   fail "The installed /usr/local/bin/petcam -h output did not match exactly."
