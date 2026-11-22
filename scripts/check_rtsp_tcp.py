@@ -29,6 +29,7 @@ class RTSPConnection:
         self._socket = socket.create_connection((self.host, self.port), timeout=timeout)
         self._socket.settimeout(timeout)
         self._buffer = bytearray()
+        self._interleaved_frames: list[tuple[int, bytes]] = []
         self._cseq = 0
 
     def close(self) -> None:
@@ -47,19 +48,31 @@ class RTSPConnection:
         del self._buffer[:size]
         return result
 
-    def _read_response(self, method: str) -> tuple[int, dict[str, str], bytes]:
-        while b"\r\n\r\n" not in self._buffer:
-            if self._buffer and self._buffer[0] == ord("$"):
-                raise RTSPProbeError(
-                    f"Server sent interleaved media on channel {self._buffer[1]} "
-                    f"before the {method} RTSP response."
-                )
+    def _extract_interleaved_frame(self) -> tuple[int, bytes] | None:
+        if not self._buffer or self._buffer[0] != ord("$"):
+            return None
+        while len(self._buffer) < 4:
             self._receive()
-        if self._buffer and self._buffer[0] == ord("$"):
-            raise RTSPProbeError(
-                f"Server sent interleaved media on channel {self._buffer[1]} "
-                f"before the {method} RTSP response."
-            )
+        channel = self._buffer[1]
+        packet_size = int.from_bytes(self._buffer[2:4], "big")
+        while len(self._buffer) < packet_size + 4:
+            self._receive()
+        packet = bytes(self._buffer[4:packet_size + 4])
+        del self._buffer[:packet_size + 4]
+        return channel, packet
+
+    def _read_response(self) -> tuple[int, dict[str, str], bytes]:
+        while True:
+            # RTP/RTCP interleaved frames can arrive between RTSP responses.
+            # Preserve them instead of treating their '$' prefix as an RTSP line.
+            frame = self._extract_interleaved_frame()
+            if frame is not None:
+                self._interleaved_frames.append(frame)
+                continue
+            if b"\r\n\r\n" in self._buffer:
+                break
+            self._receive()
+
         header_end = self._buffer.index(b"\r\n\r\n")
         raw_headers = bytes(self._buffer[:header_end])
         del self._buffer[:header_end + 4]
@@ -97,7 +110,7 @@ class RTSPConnection:
             + "\r\n"
         )
         self._socket.sendall(request.encode("latin-1"))
-        return self._read_response(method)
+        return self._read_response()
 
     def wait_for_rtp(self, timeout: float) -> tuple[int, int]:
         deadline = time.monotonic() + timeout
@@ -123,20 +136,14 @@ class RTSPConnection:
         )
 
     def _read_interleaved_frame(self, deadline: float) -> tuple[int, bytes]:
+        if self._interleaved_frames:
+            return self._interleaved_frames.pop(0)
         while time.monotonic() < deadline:
-            while len(self._buffer) < 4:
-                self._socket.settimeout(max(0.05, deadline - time.monotonic()))
-                self._receive()
-            if self._buffer[0] != ord("$"):
-                raise RTSPProbeError("Expected an interleaved RTCP/RTP frame after PLAY.")
-            channel = self._buffer[1]
-            packet_size = int.from_bytes(self._buffer[2:4], "big")
-            while len(self._buffer) < packet_size + 4:
-                self._socket.settimeout(max(0.05, deadline - time.monotonic()))
-                self._receive()
-            packet = bytes(self._buffer[4:packet_size + 4])
-            del self._buffer[:packet_size + 4]
-            return channel, packet
+            frame = self._extract_interleaved_frame()
+            if frame is not None:
+                return frame
+            self._socket.settimeout(max(0.05, deadline - time.monotonic()))
+            self._receive()
         raise RTSPProbeError("Timed out waiting for an interleaved RTP frame.")
 
     @staticmethod
