@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - "v*"
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "build-image.sh"
+      - "release.sh"
+      - "install.sh"
+      - "scripts/**"
+      - "src/**"
+      - "tests/**"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -19,6 +28,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    name: Validate image and release scripts
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pull request source
+        uses: actions/checkout@v5
+      - name: Validate shell syntax
+        run: bash -n release.sh build-image.sh install.sh scripts/verify-image-artifact.sh
+      - name: Run Python unit tests
+        env:
+          PYTHONPATH: src
+        run: python3 -m unittest discover -s tests -v
+
   release:
     name: Build and publish Trixie ARMHF image
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
