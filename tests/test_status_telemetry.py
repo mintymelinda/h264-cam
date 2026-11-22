@@ -24,8 +24,8 @@ class GStreamerRtspTests(unittest.TestCase):
             with socket.create_connection(("127.0.0.1", port), timeout=3) as client:
                 client.setblocking(False)
                 request = (
-                    f"OPTIONS rtsp://127.0.0.1:{port}/petcam RTSP/1.0\\r\\n"
-                    "CSeq: 1\\r\\nUser-Agent: PetCam-test\\r\\n\\r\\n"
+                    f"OPTIONS rtsp://127.0.0.1:{port}/petcam RTSP/1.0\r\n"
+                    "CSeq: 1\r\nUser-Agent: PetCam-test\r\n\r\n"
                 )
                 client.sendall(request.encode("ascii"))
                 response = bytearray()
@@ -38,7 +38,7 @@ class GStreamerRtspTests(unittest.TestCase):
                             response.extend(chunk)
                     except BlockingIOError:
                         pass
-                    if b"\\r\\n\\r\\n" in response:
+                    if b"\r\n\r\n" in response:
                         break
                     time.sleep(0.002)
                 self.assertIn(b"RTSP/1.0 200", response)
