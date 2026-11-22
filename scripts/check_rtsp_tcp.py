@@ -112,8 +112,119 @@ class RTSPConnection:
             f"arrived within {timeout:g} seconds."
         )
 
+    def _read_interleaved_frame(self, deadline: float) -> tuple[int, bytes]:
+        while time.monotonic() < deadline:
+            while len(self._buffer) < 4:
+                self._socket.settimeout(max(0.05, deadline - time.monotonic()))
+                self._receive()
+            if self._buffer[0] != ord("$"):
+                raise RTSPProbeError("Expected an interleaved RTCP/RTP frame after PLAY.")
+            channel = self._buffer[1]
+            packet_size = int.from_bytes(self._buffer[2:4], "big")
+            while len(self._buffer) < packet_size + 4:
+                self._socket.settimeout(max(0.05, deadline - time.monotonic()))
+                self._receive()
+            packet = bytes(self._buffer[4:packet_size + 4])
+            del self._buffer[:packet_size + 4]
+            return channel, packet
+        raise RTSPProbeError("Timed out waiting for an interleaved RTP frame.")
 
-def probe(url: str, timeout: float = 5.0) -> tuple[int, int]:
+    @staticmethod
+    def _rtp_payload(packet: bytes) -> tuple[int, int, int, bytes]:
+        if len(packet) < 12 or packet[0] >> 6 != 2:
+            raise RTSPProbeError("Received an invalid RTP packet.")
+        padding = bool(packet[0] & 0x20)
+        extension = bool(packet[0] & 0x10)
+        csrc_count = packet[0] & 0x0F
+        header_size = 12 + csrc_count * 4
+        if len(packet) < header_size:
+            raise RTSPProbeError("RTP packet ended inside its CSRC list.")
+        if extension:
+            if len(packet) < header_size + 4:
+                raise RTSPProbeError("RTP packet ended inside its header extension.")
+            extension_words = int.from_bytes(packet[header_size + 2:header_size + 4], "big")
+            header_size += 4 + extension_words * 4
+        payload_end = len(packet)
+        if padding:
+            padding_size = packet[-1]
+            if padding_size == 0 or padding_size > payload_end - header_size:
+                raise RTSPProbeError("RTP packet has invalid padding.")
+            payload_end -= padding_size
+        if payload_end <= header_size:
+            raise RTSPProbeError("RTP packet has an empty payload.")
+        sequence = int.from_bytes(packet[2:4], "big")
+        timestamp = int.from_bytes(packet[4:8], "big")
+        marker = (packet[1] & 0x80) != 0
+        return sequence, timestamp, int(marker), packet[header_size:payload_end]
+
+    def wait_for_nal(self, expected_nal: bytes, timeout: float) -> tuple[int, int, int]:
+        deadline = time.monotonic() + timeout
+        fragments: bytearray | None = None
+        fragment_timestamp: int | None = None
+        previous_sequence: int | None = None
+        fragment_packets = 0
+
+        while time.monotonic() < deadline:
+            channel, packet = self._read_interleaved_frame(deadline)
+            if channel != 0:
+                continue  # Ignore RTCP on interleaved channel 1.
+            sequence, timestamp, marker, payload = self._rtp_payload(packet)
+            nal_type = payload[0] & 0x1F
+
+            if nal_type == 28:  # H.264 FU-A
+                if len(payload) < 3:
+                    raise RTSPProbeError("Received a truncated H.264 FU-A packet.")
+                fu_header = payload[1]
+                start = bool(fu_header & 0x80)
+                end = bool(fu_header & 0x40)
+                if start:
+                    if fragments is not None:
+                        raise RTSPProbeError("A new FU-A NAL began before the previous one ended.")
+                    fragments = bytearray([(payload[0] & 0xE0) | (fu_header & 0x1F)])
+                    fragments.extend(payload[2:])
+                    fragment_timestamp = timestamp
+                    previous_sequence = sequence
+                    fragment_packets = 1
+                    continue
+
+                if fragments is None:
+                    continue  # Ignore fragments belonging to an earlier NAL.
+                if sequence != ((previous_sequence + 1) & 0xFFFF):
+                    raise RTSPProbeError("RTP sequence gap inside a fragmented H.264 NAL.")
+                if timestamp != fragment_timestamp:
+                    raise RTSPProbeError("RTP timestamp changed inside a fragmented H.264 NAL.")
+                fragments.extend(payload[2:])
+                previous_sequence = sequence
+                fragment_packets += 1
+                if end:
+                    reconstructed = bytes(fragments)
+                    if reconstructed != expected_nal:
+                        mismatch = next(
+                            (i for i, (a, b) in enumerate(zip(reconstructed, expected_nal)) if a != b),
+                            min(len(reconstructed), len(expected_nal)),
+                        )
+                        raise RTSPProbeError(
+                            f"FU-A reassembly differed from the source NAL "
+                            f"(received {len(reconstructed)} bytes, expected {len(expected_nal)}, "
+                            f"first mismatch at byte {mismatch})."
+                        )
+                    return fragment_packets, len(reconstructed), timestamp
+                continue
+
+            if fragments is None and payload == expected_nal:
+                return 1, len(payload), timestamp
+
+        raise RTSPProbeError(
+            f"Expected H.264 NAL ({len(expected_nal)} bytes) was not received "
+            f"intact within {timeout:g} seconds."
+        )
+
+
+def probe(
+    url: str,
+    timeout: float = 5.0,
+    expected_nal: bytes | None = None,
+) -> tuple[int, int, int] | tuple[int, int]:
     connection = RTSPConnection(url, timeout)
     try:
         status, _, _ = connection.request("OPTIONS", url)
@@ -166,7 +277,10 @@ def probe(url: str, timeout: float = 5.0) -> tuple[int, int]:
         )
         if status != 200:
             raise RTSPProbeError(f"PLAY failed with RTSP status {status}.")
-        return connection.wait_for_rtp(timeout)
+        if expected_nal is not None:
+            return connection.wait_for_nal(expected_nal, timeout)
+        channel, packet_size = connection.wait_for_rtp(timeout)
+        return channel, packet_size
     finally:
         connection.close()
 
@@ -181,14 +295,15 @@ def run_self_test(timeout: float) -> tuple[int, int]:
     server = Live555Server()
     server.start(port, "/petcam")
     try:
-        # Small Annex-B NAL payloads are sufficient to exercise Live555's
-        # H.264 framing, TCP SETUP negotiation, PLAY, and RTP interleaving.
-        for _ in range(8):
-            server.push_nal(bytes.fromhex("6742001f95a814016e40"))
-            server.push_nal(bytes.fromhex("68ce06e2"))
-            server.push_nal(bytes.fromhex("65888421a0"), is_idr=True)
-            server.push_nal(bytes.fromhex("419a2211"))
-        return probe(f"rtsp://127.0.0.1:{port}/petcam", timeout)
+        # A large synthetic IDR forces Live555 to fragment the NAL into FU-A
+        # RTP packets. The TCP probe reassembles those packets and compares
+        # every NAL byte with this source buffer.
+        large_idr = bytes([0x65, 0x80]) + bytes([0x55]) * (256 * 1024 - 2)
+        server.push_nal(bytes.fromhex("6742001f95a814016e40"))
+        server.push_nal(bytes.fromhex("68ce06e2"))
+        server.push_nal(large_idr, is_idr=True)
+        server.push_nal(bytes.fromhex("41803344"))
+        return probe(f"rtsp://127.0.0.1:{port}/petcam", timeout, large_idr)
     finally:
         server.stop()
 
