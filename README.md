@@ -66,6 +66,11 @@ Live555 queue, and handed to Live555's RTSP media source. Each stage reports IDR
 and non-IDR slice (NAL type 1) counts independently. RTSP-source counts are not a packet-level
 network acknowledgement; they show what Live555 handed to its RTP sink.
 
+For multi-slice H.264 pictures, PetCam reads `first_mb_in_slice` to recognize the first
+slice of an IDR picture. It places the cached SPS/PPS before that first slice only; it does not
+insert parameter sets between continuation slices of the same picture. This preserves the
+picture's access-unit structure while retaining an SPS/PPS + IDR recovery point for new clients.
+
 PetCam accepts both UDP RTP and RTP interleaved over the RTSP TCP connection. The RTSP client
 selects the transport in its SETUP request; PetCam preserves that request and returns matching
 transport parameters. For VLC, request TCP with:
@@ -81,8 +86,11 @@ python3 scripts/check_rtsp_tcp.py rtsp://DEVICE-HOSTNAME.local:8554/petcam
 ```
 
 The installer and CI run the same probe against a local Live555 instance using synthetic H.264
-NAL units. The probe checks OPTIONS, DESCRIBE, a TCP SETUP response with interleaved channels,
-PLAY, and receipt of RTP on interleaved channel 0. It does not assess visual decoding quality.
+NAL units. The self-test includes a 256 KiB IDR NAL that must be fragmented into RTP FU-A packets
+and reassembled byte-for-byte, with contiguous sequence numbers, one RTP timestamp, and the
+access-unit marker on the final fragment. The probe also buffers interleaved RTCP/RTP frames
+between RTSP control responses. This verifies TCP packet delivery and packetization, but does
+not assess the camera's visual decoding quality.
 
 Optional environment variables can be set before launching `petcam`:
 
