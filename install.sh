@@ -8,6 +8,8 @@ fail() { printf '[petcam-install] ERROR: %s\n' "$*" >&2; exit 1; }
 command -v apt-get >/dev/null 2>&1 || fail "Raspberry Pi OS / Debian with apt is required."
 command -v dpkg >/dev/null 2>&1 || fail "dpkg is required."
 [[ -f "$REPO_ROOT/src/petcam/cli.py" && -f "$REPO_ROOT/requirements.apt" && -x "$REPO_ROOT/petcam" ]] || fail "Run this installer from a complete PetCam source checkout."
+[[ -s "$REPO_ROOT/petcam" ]] || fail "The PetCam launcher source is empty."
+grep -Fq 'exec /usr/bin/python3 -m petcam.cli' "$REPO_ROOT/petcam" || fail "The PetCam launcher source does not invoke the application CLI."
 [[ -f "$REPO_ROOT/src/petcam/infrastructure/streaming/live555_server.cpp" ]] || fail "Live555 installer source files are missing."
 package_arch="$(dpkg --print-architecture)"
 [[ "$package_arch" == "armhf" ]] || fail "PetCam requires ARMHF; detected '$package_arch'."
@@ -55,6 +57,15 @@ chmod 0755 "$APP_ROOT/lib/libpetcam_live555.so"
 log "Removing compiler and development headers while retaining Live555 runtime libraries."
 apt-get purge -y g++ liblivemedia-dev libssl-dev
 apt-get autoremove -y
-install -m 0755 "$REPO_ROOT/petcam" /usr/local/bin/petcam
+LAUNCHER_TMP="/usr/local/bin/.petcam.$"
+log "Installing and validating the PetCam command launcher."
+install -m 0755 "$REPO_ROOT/petcam" "$LAUNCHER_TMP"
+if ! cmp -s "$REPO_ROOT/petcam" "$LAUNCHER_TMP" || ! "$LAUNCHER_TMP" -h >/dev/null; then
+  rm -f "$LAUNCHER_TMP"
+  fail "The installed PetCam launcher failed its integrity or CLI startup check."
+fi
+mv -f "$LAUNCHER_TMP" /usr/local/bin/petcam
+[[ -s /usr/local/bin/petcam && -x /usr/local/bin/petcam ]] || fail "The PetCam command launcher was not installed correctly."
 log "Installed PetCam at $APP_ROOT."
+log "Verified /usr/local/bin/petcam and its CLI help command."
 log "Run 'petcam' for guided setup or 'petcam -h' for command help."
