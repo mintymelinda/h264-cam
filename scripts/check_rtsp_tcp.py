@@ -7,7 +7,6 @@ import argparse
 import socket
 import sys
 import time
-from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 
@@ -173,8 +172,6 @@ def probe(url: str, timeout: float = 5.0) -> tuple[int, int]:
 
 
 def run_self_test(timeout: float) -> tuple[int, int]:
-    source_root = Path(__file__).resolve().parents[1]
-    sys.path.insert(0, str(source_root / "src"))
     from petcam.infrastructure.streaming.live555 import Live555Server
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -186,12 +183,11 @@ def run_self_test(timeout: float) -> tuple[int, int]:
     try:
         # Small Annex-B NAL payloads are sufficient to exercise Live555's
         # H.264 framing, TCP SETUP negotiation, PLAY, and RTP interleaving.
-        server.push_nal(bytes.fromhex("6742001f95a814016e40"))
-        server.push_nal(bytes.fromhex("68ce06e2"))
-        server.push_nal(bytes.fromhex("65888421a0"), is_idr=True)
         for _ in range(8):
-            server.push_nal(bytes.fromhex("419a2211"))
+            server.push_nal(bytes.fromhex("6742001f95a814016e40"))
+            server.push_nal(bytes.fromhex("68ce06e2"))
             server.push_nal(bytes.fromhex("65888421a0"), is_idr=True)
+            server.push_nal(bytes.fromhex("419a2211"))
         return probe(f"rtsp://127.0.0.1:{port}/petcam", timeout)
     finally:
         server.stop()
