@@ -104,11 +104,11 @@ protected:
     connectedClients.fetch_add(1, std::memory_order_relaxed);
     return H264VideoStreamFramer::createNew(envir(), NalSource::createNew(envir()));
   }
-  void deleteStreamSource(unsigned clientSessionId, void* streamToken) override {
+  void closeStreamSource(FramedSource* inputSource) override {
     unsigned current = connectedClients.load(std::memory_order_relaxed);
     while (current > 0 && !connectedClients.compare_exchange_weak(
       current, current - 1, std::memory_order_relaxed)) {}
-    OnDemandServerMediaSubsession::deleteStreamSource(clientSessionId, streamToken);
+    OnDemandServerMediaSubsession::closeStreamSource(inputSource);
   }
   RTPSink* createNewRTPSink(Groupsock* groupsock, unsigned char payload, FramedSource*) override {
     return H264VideoRTPSink::createNew(envir(), groupsock, payload);
@@ -164,9 +164,9 @@ void serve(unsigned short port, std::string path) {
 extern "C" {
 int petcam_start(unsigned short port, const char* path) {
   std::unique_lock<std::mutex> lock(lifecycleMutex);
+  if (worker.joinable()) return -1;
   connectedClients.store(0, std::memory_order_relaxed);
   deliveredNals.store(0, std::memory_order_relaxed);
-  if (worker.joinable()) return -1;
   startupDone = false;
   startupCode = -1;
   startupMessage.clear();
