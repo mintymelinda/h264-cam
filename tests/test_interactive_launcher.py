@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import runpy
 import pty
 import select
 import signal
@@ -11,6 +12,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+SMOKE_TEST = runpy.run_path(str(ROOT / "scripts" / "smoke-test-installed-launcher.py"))
+RENDERED_SCREEN = SMOKE_TEST["rendered_screen"]
 
 
 @unittest.skipUnless(hasattr(pty, "fork"), "requires POSIX pseudo-terminals")
@@ -44,19 +49,20 @@ class InteractiveLauncherTests(unittest.TestCase):
                 if waited_pid == child_pid:
                     status = waited_status
                     break
-                if b"Choose capture mode" in output:
+                if RENDERED_SCREEN(output) is not None:
                     break
 
-            self.assertTrue(
-                b"Choose capture mode" in output,
-                "launcher did not render the configuration menu; output was "
+            screen = RENDERED_SCREEN(output)
+            self.assertIsNotNone(
+                screen,
+                "launcher did not render the setup menu or active-stream monitor; output was "
                 + repr(output.decode("utf-8", "replace")),
             )
             waited_pid, waited_status = os.waitpid(child_pid, os.WNOHANG)
             self.assertEqual(
                 waited_pid,
                 0,
-                "launcher returned immediately instead of remaining interactive",
+                f"launcher returned immediately after rendering {screen}",
             )
         finally:
             if status is None:
