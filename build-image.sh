@@ -138,7 +138,17 @@ run_chroot /bin/bash -e -c '
   /tmp/petcam-installer/install.sh
 ' || fail "PetCam installation in the Raspberry Pi OS Trixie image failed."
 
+log "Preserving the complete recovery installer on the image."
+install -d -m 0755 "$ROOTFS/opt/petcam/installer"
+cp -a "$ROOTFS/tmp/petcam-installer/." "$ROOTFS/opt/petcam/installer/"
+cat > "$ROOTFS/opt/petcam/install.sh" <<'PETCAM_INSTALL_WRAPPER'
+#!/bin/sh
+set -eu
+exec /opt/petcam/installer/install.sh "$@"
+PETCAM_INSTALL_WRAPPER
+chmod 0755 "$ROOTFS/opt/petcam/install.sh"
 rm -rf "$ROOTFS/tmp/petcam-installer"
+
 if (( RESOLV_REPLACED )); then
   rm -f "$ROOTFS/etc/resolv.conf"
   if [[ -n "$RESOLV_LINK" ]]; then ln -s "$RESOLV_LINK" "$ROOTFS/etc/resolv.conf"; elif (( RESOLV_WAS_REGULAR )); then cp -a "$RESOLV_BACKUP" "$ROOTFS/etc/resolv.conf"; fi
@@ -146,6 +156,24 @@ if (( RESOLV_REPLACED )); then
 fi
 log "Cleaning package caches and temporary installer files."
 run_chroot /bin/bash -e -c 'apt-get clean; rm -rf /var/lib/apt/lists/*'
+
+log "Verifying the final root filesystem after installer staging and cleanup."
+run_chroot /bin/bash -e -c '
+  test -x /opt/petcam/install.sh
+  test -s /opt/petcam/installer/install.sh
+  test -s /opt/petcam/installer/requirements.apt
+  test -s /opt/petcam/installer/requirements.txt
+  test -x /opt/petcam/installer/petcam
+  test -s /opt/petcam/installer/src/petcam/cli.py
+  test -s /opt/petcam/installer/scripts/smoke-test-installed-launcher.py
+  test -x /usr/local/bin/petcam
+  test -s /opt/petcam/src/petcam/cli.py
+  test -s /opt/petcam/lib/libpetcam_live555.so
+  HELP_OUTPUT="$(/usr/local/bin/petcam -h 2>&1)"
+  grep -Fq "usage: petcam" <<< "$HELP_OUTPUT"
+  TERM=xterm-256color /usr/bin/python3 /opt/petcam/installer/scripts/smoke-test-installed-launcher.py
+' || fail "The final image root filesystem failed its installed-launcher or recovery-installer checks."
+
 if [[ -n "$CHROOT_EMULATOR" ]]; then
   rm -f "$ROOTFS/usr/bin/qemu-arm-static"
 fi
