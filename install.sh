@@ -82,9 +82,7 @@ chown root:root "$NATIVE_TMP"
 mv -f "$NATIVE_TMP" "$APP_ROOT/lib/libpetcam_live555.so"
 trap - EXIT
 [[ -s "$APP_ROOT/lib/libpetcam_live555.so" ]] || fail "The installed Live555 shared library is empty."
-log "Removing compiler and development headers while retaining Live555 runtime libraries."
-apt-get purge -y g++ liblivemedia-dev libssl-dev
-apt-get autoremove -y
+log "Leaving build dependencies installed. Do not purge packages or run autoremove on the Pi."
 LAUNCHER_TMP="/usr/local/bin/.petcam.${BASHPID}"
 log "Installing and validating the PetCam command launcher."
 install -m 0755 "$REPO_ROOT/petcam" "$LAUNCHER_TMP"
