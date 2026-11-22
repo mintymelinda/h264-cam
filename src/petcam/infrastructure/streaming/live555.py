@@ -111,6 +111,10 @@ class Live555Server:
         self.library.petcam_last_error.restype = ctypes.c_char_p
         self.library.petcam_stop.argtypes = []
         self.library.petcam_stop.restype = None
+        self.library.petcam_client_count.argtypes = []
+        self.library.petcam_client_count.restype = ctypes.c_uint
+        self.library.petcam_nal_count.argtypes = []
+        self.library.petcam_nal_count.restype = ctypes.c_ulonglong
 
     def start(self, port: int = RTSP_PORT, path: str = RTSP_PATH) -> None:
         if self.library.petcam_start(port, path.encode("ascii")) != 0:
@@ -124,6 +128,12 @@ class Live555Server:
         buffer = (ctypes.c_ubyte * len(nal)).from_buffer_copy(nal)
         if self.library.petcam_push_nal(buffer, len(nal), int(keyframe)) != 0:
             raise Live555Error("Live555 rejected an H.264 NAL unit.")
+
+    def client_count(self) -> int:
+        return int(self.library.petcam_client_count())
+
+    def nal_count(self) -> int:
+        return int(self.library.petcam_nal_count())
 
     def stop(self) -> None:
         self.library.petcam_stop()
@@ -167,12 +177,24 @@ class H264Publisher:
             self.server.push_nal(payload)
 
 
-def write_status(state: str, source: dict, message: str = "") -> None:
+def write_status(
+    state: str,
+    source: dict,
+    message: str = "",
+    *,
+    rtsp_clients: int = 0,
+    streamed_nals_per_second: float = 0.0,
+) -> None:
     RUN_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     payload = {
-        "state": state, "source": source.get("backend"),
-        "resolution": source.get("resolution"), "capture_fps": source.get("fps"),
-        "streamed_fps": None, "updated_at": time.time(), "message": message,
+        "state": state,
+        "source": source.get("backend"),
+        "resolution": source.get("resolution"),
+        "capture_fps": source.get("fps"),
+        "rtsp_clients": rtsp_clients,
+        "streamed_nals_per_second": round(streamed_nals_per_second, 1),
+        "updated_at": time.time(),
+        "message": message,
     }
     temporary = STREAM_STATUS.with_name(STREAM_STATUS.name + ".tmp")
     temporary.write_text(json.dumps(payload) + "\n", encoding="utf-8")
@@ -215,6 +237,8 @@ def run_server(camera_status: dict) -> int:
             logging.exception("H.264 capture/publishing failed")
 
     started_at = time.monotonic()
+    previous_nal_count = 0
+    previous_sample_at = started_at
     try:
         server.start()
         capture = subprocess.Popen(
@@ -229,12 +253,28 @@ def run_server(camera_status: dict) -> int:
                 raise Live555Error(f"Camera capture exited with status {capture.returncode}.")
             if reader_error["message"]:
                 raise Live555Error(reader_error["message"])
+            now = time.monotonic()
+            nal_count = server.nal_count()
+            elapsed = max(now - previous_sample_at, 0.001)
+            nals_per_second = (nal_count - previous_nal_count) / elapsed
+            previous_nal_count = nal_count
+            previous_sample_at = now
             if first_idr.is_set():
-                write_status("ready", camera_status)
-            elif time.monotonic() - started_at > 12:
+                write_status(
+                    "ready",
+                    camera_status,
+                    rtsp_clients=server.client_count(),
+                    streamed_nals_per_second=nals_per_second,
+                )
+            elif now - started_at > 12:
                 raise Live555Error("No H.264 IDR frame with SPS/PPS arrived within 12 seconds.")
             else:
-                write_status("starting", camera_status)
+                write_status(
+                    "starting",
+                    camera_status,
+                    rtsp_clients=server.client_count(),
+                    streamed_nals_per_second=nals_per_second,
+                )
             stop_requested.wait(1)
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)
