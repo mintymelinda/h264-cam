@@ -613,7 +613,6 @@ def _monitor_stream(config: dict, stdscr) -> int:
 
 
 def run_stream(config: dict, stdscr) -> int:
-    RUN_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
     _save_config(config)
     _systemctl("restart")
     start_deadline = time.monotonic() + 30
