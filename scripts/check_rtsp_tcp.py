@@ -49,7 +49,15 @@ class RTSPConnection:
 
     def _read_response(self) -> tuple[int, dict[str, str], bytes]:
         while b"\r\n\r\n" not in self._buffer:
+            if self._buffer and self._buffer[0] == ord("$"):
+                raise RTSPProbeError(
+                    "Server sent interleaved RTP/RTCP before completing the RTSP response."
+                )
             self._receive()
+        if self._buffer and self._buffer[0] == ord("$"):
+            raise RTSPProbeError(
+                "Server sent interleaved RTP/RTCP before completing the RTSP response."
+            )
         header_end = self._buffer.index(b"\r\n\r\n")
         raw_headers = bytes(self._buffer[:header_end])
         del self._buffer[:header_end + 4]
