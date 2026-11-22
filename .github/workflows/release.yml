@@ -46,7 +46,7 @@ jobs:
     name: Build and publish Trixie ARMHF image
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 90
+    timeout-minutes: 180
 
     steps:
       - name: Check out the exact release tag
@@ -84,9 +84,10 @@ jobs:
           PYTHONPATH: src
         run: python3 -m unittest discover -s tests -v
 
-      - name: Install image-build host tools and QEMU
+      - name: Install ARMHF execution and image-build tools on the ARM runner
         shell: bash
         run: |
+          test "$(uname -m)" = aarch64
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             qemu-user-static \
@@ -98,7 +99,7 @@ jobs:
           test -x /usr/bin/qemu-arm-static
           /usr/bin/qemu-arm-static --version
 
-      - name: Build final OS image and Raspberry Pi Imager manifest
+      - name: Build image by cloning the release and running its real installer
         id: release
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
@@ -119,7 +120,9 @@ jobs:
           body: |
             H264 Cam for Raspberry Pi OS Lite (32-bit ARMHF), based on Raspberry Pi OS Trixie.
 
-            The image contains `/opt/petcam/build-info` with the exact source commit, release version, and retained-installer SHA-256. Before publishing, the workflow mounts the compressed artifact again and runs the retained recovery installer from that extracted image.
+            The image is built on an ARM GitHub Actions runner. The build decompresses the official Raspberry Pi OS image, enters its ARMHF userspace with QEMU, installs Git, clones this exact release tag, and runs the repository's top-level sudo ./install.sh. The finished compressed artifact is then extracted and its installed application and native Live555 library are verified.
+
+            /opt/petcam/build-info records the exact source commit, release version, and SHA-256 of the installer used during the build.
 
             Assets:
             - Compressed Raspberry Pi OS image (.img.xz)
