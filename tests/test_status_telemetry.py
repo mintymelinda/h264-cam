@@ -3,7 +3,7 @@ from __future__ import annotations
 import builtins
 import importlib.util
 import socket
-import threading
+import time
 import unittest
 from io import StringIO
 from unittest.mock import patch
@@ -24,32 +24,59 @@ class GStreamerRtspTests(unittest.TestCase):
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
 
-        media_configured = threading.Event()
+        media_configured = []
         server = GStreamerRtspServer(
             port=port,
-            on_media_configure=lambda _appsrc: media_configured.set(),
+            on_media_configure=lambda appsrc: media_configured.append(appsrc),
         )
+
+        def exchange(client, request, expected_body=False):
+            client.sendall(request.encode("ascii"))
+            response = bytearray()
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                server.iterate()
+                try:
+                    chunk = client.recv(8192)
+                    if chunk:
+                        response.extend(chunk)
+                except BlockingIOError:
+                    pass
+                header_end = response.find(b"\\r\\n\\r\\n")
+                if header_end >= 0:
+                    headers = bytes(response[:header_end]).lower()
+                    content_length = 0
+                    for line in headers.split(b"\\r\\n")[1:]:
+                        if line.startswith(b"content-length:"):
+                            content_length = int(line.partition(b":")[2].strip())
+                            break
+                    if len(response) >= header_end + 4 + content_length:
+                        return bytes(response)
+                time.sleep(0.002)
+            self.fail(f"Timed out waiting for RTSP response: {bytes(response)!r}")
+
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=3) as client:
-                client.settimeout(3)
-                client.sendall(
+                client.setblocking(False)
+                options = exchange(
+                    client,
                     f"OPTIONS rtsp://127.0.0.1:{port}/petcam RTSP/1.0\\r\\n"
-                    "CSeq: 1\\r\\nUser-Agent: PetCam-test\\r\\n\\r\\n".encode("ascii")
+                    "CSeq: 1\\r\\nUser-Agent: PetCam-test\\r\\n\\r\\n",
                 )
-                options_response = client.recv(4096)
-                self.assertIn(b"RTSP/1.0 200", options_response)
+                self.assertIn(b"RTSP/1.0 200", options)
 
-                client.sendall(
+                describe = exchange(
+                    client,
                     f"DESCRIBE rtsp://127.0.0.1:{port}/petcam RTSP/1.0\\r\\n"
                     "CSeq: 2\\r\\nAccept: application/sdp\\r\\n"
-                    "User-Agent: PetCam-test\\r\\n\\r\\n".encode("ascii")
+                    "User-Agent: PetCam-test\\r\\n\\r\\n",
+                    expected_body=True,
                 )
-                describe_response = client.recv(8192)
-
-            self.assertIn(b"RTSP/1.0 200", describe_response)
-            self.assertIn(b"application/sdp", describe_response.lower())
-            self.assertIn(b"m=video", describe_response)
-            self.assertTrue(media_configured.wait(3), "DESCRIBE did not configure the GStreamer media pipeline")
+                self.assertIn(b"RTSP/1.0 200", describe)
+                self.assertIn(b"application/sdp", describe.lower())
+                self.assertIn(b"m=video", describe)
+            self.assertTrue(media_configured, "DESCRIBE did not configure the GStreamer media pipeline")
+            self.assertIsNotNone(media_configured[0])
         finally:
             server.stop()
 
