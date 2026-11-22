@@ -9,7 +9,7 @@ fail() { printf '[petcam-artifact] ERROR: %s\n' "$*" >&2; exit 1; }
 [[ -s "$IMAGE_ARCHIVE" ]] || fail "Compressed image archive is missing or empty."
 [[ -n "$EXPECTED_VERSION" && "$EXPECTED_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || fail "Expected image version is invalid."
 [[ "$EXPECTED_COMMIT" =~ ^[a-fA-F0-9]{40}$ ]] || fail "Expected source commit must be a full Git SHA."
-for tool in xz losetup mount umount blkid chroot sha256sum; do
+for tool in xz losetup mount umount mountpoint blkid chroot sha256sum udevadm; do
   command -v "$tool" >/dev/null 2>&1 || fail "Required host tool is missing: $tool"
 done
 CHROOT_EMULATOR=""
@@ -99,6 +99,12 @@ run_chroot() {
     chroot "$ROOTFS" "$@"
   fi
 }
+run_chroot /bin/bash -e -c '
+  test "$(dpkg --print-architecture)" = armhf
+  test "$(getconf LONG_BIT)" = 32
+  . /etc/os-release
+  test "$VERSION_CODENAME" = trixie
+' || fail "Extracted release image is not Raspberry Pi OS Trixie ARMHF."
 log "Executing the recovery wrapper from the extracted release image."
 run_chroot /opt/petcam/install.sh || fail "The retained recovery installer failed when executed from the release image."
 log "Rechecking the extracted image after the recovery installation."
