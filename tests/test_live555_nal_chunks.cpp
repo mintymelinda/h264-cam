@@ -1,10 +1,47 @@
 #include "nal_chunk.hpp"
+#include "rtsp_transport.hpp"
 
 #include <cassert>
 #include <cstddef>
 #include <vector>
 
 int main() {
+  {
+    const std::string udpRequest =
+      "SETUP rtsp://kittycam.local/petcam/track1 RTSP/1.0\\r\\n"
+      "CSeq: 2\\r\\n"
+      "Transport: RTP/AVP;unicast;client_port=5000-5001\\r\\n"
+      "User-Agent: PetCam-Test\\r\\n\\r\\n";
+    const std::string forced = petcam::forceRtpTcpTransport(udpRequest);
+    assert(forced.find("Transport: RTP/AVP/TCP;unicast\\r\\n") != std::string::npos);
+    assert(forced.find("client_port=") == std::string::npos);
+    assert(forced.find("User-Agent: PetCam-Test\\r\\n") != std::string::npos);
+  }
+
+  {
+    const std::string noTransport =
+      "SETUP rtsp://kittycam.local/petcam/track1 RTSP/1.0\\r\\n"
+      "CSeq: 3\\r\\n\\r\\n";
+    const std::string forced = petcam::forceRtpTcpTransport(noTransport);
+    assert(forced.find(
+      "CSeq: 3\\r\\nTransport: RTP/AVP/TCP;unicast\\r\\n\\r\\n"
+    ) != std::string::npos);
+  }
+
+  {
+    const std::string mixedCase =
+      "SETUP rtsp://kittycam.local/petcam/track1 RTSP/1.0\\r\\n"
+      "cSeQ: 4\\r\\n"
+      "tRaNsPoRt: RTP/AVP;unicast;client_port=1000-1001\\r\\n"
+      "TRANSPORT: RTP/AVP;unicast;client_port=2000-2001\\r\\n\\r\\n";
+    const std::string forced = petcam::forceRtpTcpTransport(mixedCase);
+    const std::string selected = "Transport: RTP/AVP/TCP;unicast";
+    const auto first = forced.find(selected);
+    assert(first != std::string::npos);
+    assert(forced.find(selected, first + selected.size()) == std::string::npos);
+    assert(forced.find("client_port=") == std::string::npos);
+  }
+
   {
     std::vector<unsigned char> nal(256U * 1024U, 0x55);
     nal[0] = 0x65;
