@@ -14,19 +14,22 @@ jobs:
   test:
     name: Python tests and Live555 native build
     runs-on: ubuntu-24.04
+    container: debian:trixie
     timeout-minutes: 15
 
     steps:
-      - name: Check out source
-        uses: actions/checkout@v5
-
-      - name: Install Live555 build dependencies
+      - name: Install Git and Live555 build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git \
+            ca-certificates \
             g++ \
             liblivemedia-dev \
             libssl-dev
+
+      - name: Check out source
+        uses: actions/checkout@v5
 
       - name: Validate shell scripts
         run: bash -n install.sh build-image.sh release.sh
