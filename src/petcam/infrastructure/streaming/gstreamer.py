@@ -80,8 +80,7 @@ class GStreamerRtspServer:
         self._media_bus = None
         self._error = ""
         self._clients: set[int] = set()
-        self._loop = self.GLib.MainLoop()
-        self._thread: threading.Thread | None = None
+        self._context = self.GLib.MainContext.default()
         self._source_id = 0
 
         self.server = self.GstRtspServer.RTSPServer()
@@ -93,20 +92,16 @@ class GStreamerRtspServer:
         self.server.get_mount_points().add_factory(path, self.factory)
         self.server.connect("client-connected", self._on_client_connected)
 
-        self._source_id = self.server.attach(None)
+        self._source_id = self.server.attach(self._context)
         if not self._source_id:
             raise GStreamerError(f"Unable to bind the GStreamer RTSP server to port {port}.")
 
-        self._thread = threading.Thread(
-            target=self._loop.run, name="petcam-gstreamer-rtsp", daemon=True
-        )
-        self._thread.start()
-        deadline = time.monotonic() + 2.0
-        while not self._loop.is_running() and time.monotonic() < deadline:
-            time.sleep(0.005)
-        if not self._loop.is_running():
-            self.stop()
-            raise GStreamerError("The GStreamer RTSP event loop did not start.")
+    def iterate(self) -> None:
+        """Dispatch ready RTSP/GLib sources from the foreground terminal loop."""
+        for _ in range(64):
+            if not self._context.pending():
+                break
+            self._context.iteration(False)
 
     @property
     def error(self) -> str:
@@ -204,14 +199,8 @@ class GStreamerRtspServer:
                 bus.remove_signal_watch()
             except Exception:
                 pass
-        self._loop.quit()
-        if self._thread is not None:
-            self._thread.join(timeout=3)
         if self._source_id:
-            try:
-                self.GLib.source_remove(self._source_id)
-            except Exception:
-                pass
+            self.GLib.source_remove(self._source_id)
             self._source_id = 0
 
 
@@ -324,6 +313,10 @@ class GStreamerSession:
             "capture_bytes_per_second": rate,
             "capture_bytes_total": total,
         }
+
+    def iterate(self) -> None:
+        if self.server is not None:
+            self.server.iterate()
 
     def stop(self) -> None:
         self._stop.set()
