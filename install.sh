@@ -111,14 +111,14 @@ mv -f "$LAUNCHER_TMP" /usr/local/bin/petcam
 
 log "Installing the persistent RTSP system service."
 getent group video >/dev/null 2>&1 || fail "The video group is required for camera access and service control."
-if [[ -n "\${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] && id "$SUDO_USER" >/dev/null 2>&1; then
+if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] && id "$SUDO_USER" >/dev/null 2>&1; then
   usermod -aG video "$SUDO_USER"
 fi
 install -d -o root -g video -m 2770 /var/lib/petcam
 install -m 0644 "$REPO_ROOT/systemd/petcam.service" /etc/systemd/system/petcam.service
 SYSTEMCTL="$(command -v systemctl)"
 SUDOERS_TMP="$(mktemp /etc/sudoers.d/.petcam.XXXXXX)"
-printf '%%video ALL=(root) NOPASSWD: %s start petcam.service, %s stop petcam.service, %s restart petcam.service\\n' \
+printf '%%video ALL=(root) NOPASSWD: %s start petcam.service, %s stop petcam.service, %s restart petcam.service\n' \
   "$SYSTEMCTL" "$SYSTEMCTL" "$SYSTEMCTL" > "$SUDOERS_TMP"
 chmod 0440 "$SUDOERS_TMP"
 if ! visudo -cf "$SUDOERS_TMP"; then
