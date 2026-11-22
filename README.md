@@ -94,8 +94,10 @@ across multiple slices, so it is an experiment rather than the default.
 
 USB H.264 is captured
 directly with V4L2; CSI H.264 is captured with `rpicam-vid`. Both paths pass Annex-B
-NAL units to Live555 without decoding or transcoding. New clients start at a cached
-SPS/PPS + IDR boundary.
+NAL units to Live555 without decoding or transcoding. Only the IDR NAL (type 5) carries
+the `is_idr` marker. When a client joins or the queue loses data, Live555 uses that IDR
+marker to locate the associated SPS/PPS entries immediately before it and resumes from
+that complete recovery sequence.
 
 ## Build an image locally
 
