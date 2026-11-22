@@ -72,7 +72,7 @@ class ManagedStreamTests(unittest.TestCase):
                 self.assertEqual(os.environ["PETCAM_V4L2_CONTROLS"], "video_bitrate=6000000")
                 marker = json.loads(camera_status.read_text(encoding="utf-8"))
                 self.assertEqual(marker["pid"], os.getpid())
-                stream_status.write_text("{}\\n", encoding="utf-8")
+                stream_status.write_text("{}\n", encoding="utf-8")
                 return None
 
             with (
