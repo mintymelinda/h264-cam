@@ -59,23 +59,24 @@ class InteractiveLauncherTests(unittest.TestCase):
                 "launcher returned immediately instead of remaining interactive",
             )
         finally:
-            try:
-                os.kill(child_pid, signal.SIGINT)
-            except ProcessLookupError:
-                pass
-            end = time.monotonic() + 3
-            while time.monotonic() < end:
-                waited_pid, waited_status = os.waitpid(child_pid, os.WNOHANG)
-                if waited_pid == child_pid:
-                    status = waited_status
-                    break
-                time.sleep(0.05)
             if status is None:
                 try:
-                    os.kill(child_pid, signal.SIGKILL)
+                    os.kill(child_pid, signal.SIGINT)
                 except ProcessLookupError:
                     pass
-                os.waitpid(child_pid, 0)
+                end = time.monotonic() + 3
+                while time.monotonic() < end:
+                    waited_pid, waited_status = os.waitpid(child_pid, os.WNOHANG)
+                    if waited_pid == child_pid:
+                        status = waited_status
+                        break
+                    time.sleep(0.05)
+                if status is None:
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    os.waitpid(child_pid, 0)
             os.close(terminal_fd)
 
 
