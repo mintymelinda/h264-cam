@@ -8,6 +8,9 @@ fail() { printf '[petcam-install] ERROR: %s\n' "$*" >&2; exit 1; }
 command -v apt-get >/dev/null 2>&1 || fail "Raspberry Pi OS / Debian with apt is required."
 command -v dpkg >/dev/null 2>&1 || fail "dpkg is required."
 [[ -s "$REPO_ROOT/src/petcam/cli.py" && -f "$REPO_ROOT/requirements.apt" && -x "$REPO_ROOT/petcam" ]] || fail "Run this installer from a complete PetCam source checkout with a non-empty CLI module."
+if EMPTY_PYTHON_FILE="$(find "$REPO_ROOT/src/petcam" -type f -name '*.py' -size 0 -print -quit)" && [[ -n "$EMPTY_PYTHON_FILE" ]]; then
+  fail "PetCam Python source file is empty: $EMPTY_PYTHON_FILE"
+fi
 [[ -s "$REPO_ROOT/petcam" ]] || fail "The PetCam launcher source is empty."
 grep -Fq 'exec /usr/bin/python3 -m petcam.cli' "$REPO_ROOT/petcam" || fail "The PetCam launcher source does not invoke the application CLI."
 [[ -f "$REPO_ROOT/src/petcam/infrastructure/streaming/live555_server.cpp" ]] || fail "Live555 installer source files are missing."
@@ -45,16 +48,40 @@ log "Installing the Python application source."
 install -d -m 0755 "$APP_ROOT" /usr/local/bin "$APP_ROOT/lib"
 rm -rf "$APP_ROOT/src"
 cp -a "$REPO_ROOT/src" "$APP_ROOT/src"
-cmp -s "$REPO_ROOT/src/petcam/cli.py" "$APP_ROOT/src/petcam/cli.py" || fail "The installed PetCam CLI module does not match the installer source."
+if ! diff -qr "$REPO_ROOT/src/petcam" "$APP_ROOT/src/petcam"; then
+  fail "The installed PetCam Python package does not match the installer source."
+fi
 chown -R root:root "$APP_ROOT"
+log "Compiling and smoke-testing the installed Python application."
+/usr/bin/python3 -m compileall -q "$APP_ROOT/src/petcam"
+if ! HELP_OUTPUT="$(PYTHONPATH="$APP_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" /usr/bin/python3 -m petcam.cli -h 2>&1)"; then
+  printf '%s\n' "$HELP_OUTPUT" >&2
+  fail "The installed PetCam Python CLI failed its startup check."
+fi
+grep -Fq "usage: petcam" <<< "$HELP_OUTPUT" || fail "The installed PetCam Python CLI did not produce its expected help output."
 log "Compiling the Live555 RTSP/RTP server for ARMHF."
+NATIVE_TMP="$(mktemp "$APP_ROOT/lib/.libpetcam_live555.so.XXXXXX")"
+trap 'rm -f "$NATIVE_TMP"' EXIT
 g++ -std=c++17 -O2 -fPIC -shared \
   -I/usr/include/liveMedia -I/usr/include/groupsock \
   -I/usr/include/BasicUsageEnvironment -I/usr/include/UsageEnvironment \
   "$APP_ROOT/src/petcam/infrastructure/streaming/live555_server.cpp" \
-  -o "$APP_ROOT/lib/libpetcam_live555.so" \
+  -o "$NATIVE_TMP" \
   -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment -pthread
-chmod 0755 "$APP_ROOT/lib/libpetcam_live555.so"
+[[ -s "$NATIVE_TMP" ]] || fail "The Live555 compiler produced an empty shared library."
+ELF_HEADER="$(readelf -h "$NATIVE_TMP")" || fail "The compiled Live555 library is not a valid ELF shared library."
+grep -Eq 'Class:[[:space:]]+ELF32' <<< "$ELF_HEADER" || fail "The Live555 library is not a 32-bit ELF binary."
+grep -Eq 'Machine:[[:space:]]+ARM' <<< "$ELF_HEADER" || fail "The Live555 library was not compiled for ARM."
+NATIVE_DEPS="$(ldd "$NATIVE_TMP" 2>&1)" || fail "Unable to inspect Live555 library dependencies."
+if grep -Fq "not found" <<< "$NATIVE_DEPS"; then
+  printf '%s\n' "$NATIVE_DEPS" >&2
+  fail "The compiled Live555 library has unresolved runtime dependencies."
+fi
+chmod 0755 "$NATIVE_TMP"
+chown root:root "$NATIVE_TMP"
+mv -f "$NATIVE_TMP" "$APP_ROOT/lib/libpetcam_live555.so"
+trap - EXIT
+[[ -s "$APP_ROOT/lib/libpetcam_live555.so" ]] || fail "The installed Live555 shared library is empty."
 log "Removing compiler and development headers while retaining Live555 runtime libraries."
 apt-get purge -y g++ liblivemedia-dev libssl-dev
 apt-get autoremove -y
