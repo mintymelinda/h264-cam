@@ -59,7 +59,13 @@ done
 mkdir -p "$ROOTFS"
 mount "$LOOP_DEVICE"p2 "$ROOTFS"
 log "Checking release provenance and installed PetCam files."
-[[ -s "$ROOTFS/opt/petcam/build-info" ]] || fail "Image provenance file is missing."
+if [[ ! -s "$ROOTFS/opt/petcam/build-info" ]]; then
+  log "No /opt/petcam/build-info in the extracted root partition. /opt contents:"
+  ls -laR "$ROOTFS/opt" 2>/dev/null || true
+  log "Any build-info files in the root partition:"
+  find "$ROOTFS" -xdev -name build-info -print 2>/dev/null || true
+  fail "Image provenance file is missing from the extracted release artifact."
+fi
 grep -Fxq "PETCAM_VERSION=$EXPECTED_VERSION" "$ROOTFS/opt/petcam/build-info" || fail "Image version does not match the release tag."
 grep -Fxq "SOURCE_COMMIT=$EXPECTED_COMMIT" "$ROOTFS/opt/petcam/build-info" || fail "Image source commit does not match the checked-out release tag."
 INSTALLER_SHA256="$(awk -F= '$1 == "INSTALLER_SHA256" { print $2 }' "$ROOTFS/opt/petcam/build-info")"
