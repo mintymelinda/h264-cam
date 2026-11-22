@@ -53,3 +53,9 @@ jobs:
             -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment -pthread
           test -s "$RUNNER_TEMP/libpetcam_live555.so"
           ldd "$RUNNER_TEMP/libpetcam_live555.so"
+          install -d -m 0755 /opt/petcam/src /opt/petcam/lib /usr/local/bin
+          cp -a src/petcam /opt/petcam/src/
+          install -m 0755 "$RUNNER_TEMP/libpetcam_live555.so" /opt/petcam/lib/libpetcam_live555.so
+          install -m 0755 petcam /usr/local/bin/petcam
+          PYTHONPATH=/opt/petcam/src python3 -c 'from petcam.infrastructure.streaming.live555 import Live555Server; Live555Server()'
+          python3 scripts/smoke-test-installed-launcher.py
