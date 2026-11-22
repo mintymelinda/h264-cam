@@ -129,7 +129,7 @@ if [[ -n "$CHROOT_EMULATOR" ]]; then
   install -D -m 0755 "$CHROOT_EMULATOR" "$ROOTFS/usr/bin/qemu-arm-static"
 fi
 mkdir -p "$ROOTFS/tmp/petcam-installer"
-cp -a "$REPO_ROOT/install.sh" "$REPO_ROOT/requirements.apt" "$REPO_ROOT/requirements.txt" "$REPO_ROOT/petcam" "$REPO_ROOT/src" "$ROOTFS/tmp/petcam-installer/"
+cp -a "$REPO_ROOT/install.sh" "$REPO_ROOT/requirements.apt" "$REPO_ROOT/requirements.txt" "$REPO_ROOT/petcam" "$REPO_ROOT/src" "$REPO_ROOT/scripts" "$ROOTFS/tmp/petcam-installer/"
 run_chroot /bin/bash -e -c '
   test "$(dpkg --print-architecture)" = armhf
   test "$(getconf LONG_BIT)" = 32
