@@ -81,12 +81,28 @@ public:
 protected:
   explicit NalSource(UsageEnvironment& env, bool includeStartCode)
     : FramedSource(env), includeStartCode_(includeStartCode) {}
-  void doGetNextFrame() override { deliver(); }
+  void doGetNextFrame() override {
+    // Never call afterGetting() re-entrantly from RTSP PLAY/SETUP handling.
+    // The RTSP response must be written before interleaved RTP/RTCP media.
+    nextTask() = envir().taskScheduler().scheduleDelayedTask(0, deliverTask, this);
+  }
   void doStopGettingFrames() override {
-    if (nextTask() != nullptr) envir().taskScheduler().unscheduleDelayedTask(nextTask());
+    if (nextTask() != nullptr) {
+      envir().taskScheduler().unscheduleDelayedTask(nextTask());
+      nextTask() = nullptr;
+    }
   }
 private:
-  static void retry(void* p) { static_cast<NalSource*>(p)->deliver(); }
+  static void deliverTask(void* p) {
+    auto* source = static_cast<NalSource*>(p);
+    source->nextTask() = nullptr;
+    source->deliver();
+  }
+  static void retry(void* p) {
+    auto* source = static_cast<NalSource*>(p);
+    source->nextTask() = nullptr;
+    source->deliver();
+  }
   void deliver() {
     if (!isCurrentlyAwaitingData()) return;
 
