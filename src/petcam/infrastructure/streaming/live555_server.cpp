@@ -2,6 +2,7 @@
 #include <BasicUsageEnvironment.hh>
 #include <GroupsockHelper.hh>
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <condition_variable>
@@ -29,6 +30,8 @@ bool startupDone = false;
 std::condition_variable startupCondition;
 int startupCode = -1;
 std::string startupMessage;
+std::atomic<unsigned> connectedClients{0};
+std::atomic<unsigned long long> deliveredNals{0};
 
 class NalSource final : public FramedSource {
 public:
@@ -85,6 +88,7 @@ private:
     gettimeofday(&fPresentationTime, nullptr);
     fDurationInMicroseconds = 0;
     FramedSource::afterGetting(this);
+    deliveredNals.fetch_add(1, std::memory_order_relaxed);
   }
   std::uint64_t cursor_ = 0;
   bool cursorSet_ = false;
@@ -97,7 +101,14 @@ protected:
   explicit H264Subsession(UsageEnvironment& env) : OnDemandServerMediaSubsession(env, False) {}
   FramedSource* createNewStreamSource(unsigned, unsigned& bitrate) override {
     bitrate = 8000;
+    connectedClients.fetch_add(1, std::memory_order_relaxed);
     return H264VideoStreamFramer::createNew(envir(), NalSource::createNew(envir()));
+  }
+  void deleteStreamSource(unsigned clientSessionId, void* streamToken) override {
+    unsigned current = connectedClients.load(std::memory_order_relaxed);
+    while (current > 0 && !connectedClients.compare_exchange_weak(
+      current, current - 1, std::memory_order_relaxed)) {}
+    OnDemandServerMediaSubsession::deleteStreamSource(clientSessionId, streamToken);
   }
   RTPSink* createNewRTPSink(Groupsock* groupsock, unsigned char payload, FramedSource*) override {
     return H264VideoRTPSink::createNew(envir(), groupsock, payload);
@@ -153,6 +164,8 @@ void serve(unsigned short port, std::string path) {
 extern "C" {
 int petcam_start(unsigned short port, const char* path) {
   std::unique_lock<std::mutex> lock(lifecycleMutex);
+  connectedClients.store(0, std::memory_order_relaxed);
+  deliveredNals.store(0, std::memory_order_relaxed);
   if (worker.joinable()) return -1;
   startupDone = false;
   startupCode = -1;
@@ -179,6 +192,8 @@ int petcam_push_nal(const unsigned char* data, std::size_t size, int keyframe) {
   return 0;
 }
 const char* petcam_last_error() { return startupMessage.c_str(); }
+unsigned petcam_client_count() { return connectedClients.load(std::memory_order_relaxed); }
+unsigned long long petcam_nal_count() { return deliveredNals.load(std::memory_order_relaxed); }
 void petcam_stop() {
   {
     std::lock_guard<std::mutex> lock(lifecycleMutex);
