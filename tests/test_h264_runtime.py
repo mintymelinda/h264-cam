@@ -10,6 +10,7 @@ from petcam.domain.camera.capabilities import parse_csi_cameras, parse_v4l2_mode
 from petcam.infrastructure.camera.h264 import (
     AnnexBNalFramer,
     H264AccessUnitFramer,
+    first_mb_in_slice,
     inspect_h264_access_unit,
 )
 from petcam.infrastructure.streaming.live555 import (
@@ -186,6 +187,43 @@ class NativeCaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(Live555Error, "SPS and PPS"):
             H264Publisher(FakeServer()).publish(b"\x00\x00\x00\x01\x65\x88")
 
+
+    def test_publisher_repeats_parameter_sets_only_before_first_idr_slice(self):
+        class FakeServer:
+            def __init__(self):
+                self.nals = []
+            def push_nal(self, nal, is_idr=False):
+                self.nals.append((nal, is_idr))
+
+        prefix = b"\\x00\\x00\\x00\\x01"
+        sps = b"\\x67\\x42\\x00\\x1e"
+        pps = b"\\x68\\xce\\x06"
+        idr_first = b"\\x65\\xe0"  # first_mb_in_slice = 0
+        idr_continuation = b"\\x65\\x58"  # first_mb_in_slice = 1
+
+        server = FakeServer()
+        publisher = H264Publisher(server)
+        publisher.publish(prefix + sps)
+        publisher.publish(prefix + pps)
+        publisher.publish(prefix + idr_first)
+        publisher.publish(prefix + idr_continuation)
+        publisher.publish(prefix + idr_first)
+        publisher.publish(prefix + idr_continuation)
+
+        self.assertEqual(server.nals, [
+            (sps, False),
+            (pps, False),
+            (idr_first, True),
+            (idr_continuation, True),
+            (sps, False),
+            (pps, False),
+            (idr_first, True),
+            (idr_continuation, True),
+        ])
+
+    def test_first_mb_in_slice_distinguishes_picture_start_from_continuation(self):
+        self.assertEqual(first_mb_in_slice(self.nal(0x65, b"\\xe0")), 0)
+        self.assertEqual(first_mb_in_slice(self.nal(0x65, b"\\x58")), 1)
 
 class H264AccessUnitFramingTests(unittest.TestCase):
     @staticmethod
