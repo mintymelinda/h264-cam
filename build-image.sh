@@ -176,7 +176,7 @@ log "Cleaning package caches and temporary installer files."
 run_chroot /bin/bash -e -c 'apt-get clean; rm -rf /var/lib/apt/lists/*'
 
 log "Verifying the final root filesystem after installer staging and cleanup."
-run_chroot /bin/bash -e -c '
+run_chroot env EXPECTED_VERSION="$VERSION" EXPECTED_SOURCE_COMMIT="$SOURCE_COMMIT" EXPECTED_INSTALLER_SHA256="$INSTALLER_SHA256" /bin/bash -e -c '
   test -s /opt/petcam/install.sh
   test -x /opt/petcam/install.sh
   test -s /opt/petcam/installer/install.sh
@@ -194,9 +194,9 @@ run_chroot /bin/bash -e -c '
   test -s /opt/petcam/src/petcam/cli.py
   test -s /opt/petcam/lib/libpetcam_live555.so
   test -s /opt/petcam/build-info
-  grep -Fxq "PETCAM_VERSION=$VERSION" /opt/petcam/build-info
-  grep -Fxq "SOURCE_COMMIT=$SOURCE_COMMIT" /opt/petcam/build-info
-  grep -Fxq "INSTALLER_SHA256=$INSTALLER_SHA256" /opt/petcam/build-info
+  grep -Fxq "PETCAM_VERSION=$EXPECTED_VERSION" /opt/petcam/build-info
+  grep -Fxq "SOURCE_COMMIT=$EXPECTED_SOURCE_COMMIT" /opt/petcam/build-info
+  grep -Fxq "INSTALLER_SHA256=$EXPECTED_INSTALLER_SHA256" /opt/petcam/build-info
   /usr/bin/python3 /opt/petcam/installer/scripts/smoke-test-installed-help.py
   TERM=xterm-256color /usr/bin/python3 /opt/petcam/installer/scripts/smoke-test-installed-launcher.py
 ' || fail "The final image root filesystem failed its installed-launcher or recovery-installer checks."
