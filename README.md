@@ -66,6 +66,24 @@ Live555 queue, and handed to Live555's RTSP media source. Each stage reports IDR
 and non-IDR slice (NAL type 1) counts independently. RTSP-source counts are not a packet-level
 network acknowledgement; they show what Live555 handed to its RTP sink.
 
+PetCam accepts both UDP RTP and RTP interleaved over the RTSP TCP connection. The RTSP client
+selects the transport in its SETUP request; PetCam preserves that request and returns matching
+transport parameters. For VLC, request TCP with:
+
+```sh
+vlc --rtsp-tcp rtsp://DEVICE-HOSTNAME.local:8554/petcam
+```
+
+To verify TCP negotiation and receipt of an interleaved RTP packet without a video player:
+
+```sh
+python3 scripts/check_rtsp_tcp.py rtsp://DEVICE-HOSTNAME.local:8554/petcam
+```
+
+The installer and CI run the same probe against a local Live555 instance using synthetic H.264
+NAL units. The probe checks OPTIONS, DESCRIBE, a TCP SETUP response with interleaved channels,
+PLAY, and receipt of RTP on interleaved channel 0. It does not assess visual decoding quality.
+
 Optional environment variables can be set before launching `petcam`:
 
 | Variable | Default | Purpose |
