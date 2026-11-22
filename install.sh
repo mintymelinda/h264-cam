@@ -134,10 +134,10 @@ log "Verifying the installed command's exact help output."
 if ! /usr/bin/python3 "$REPO_ROOT/scripts/smoke-test-installed-help.py"; then
   fail "The installed /usr/local/bin/petcam -h output did not match exactly."
 fi
-log "Verifying the installed command opens the interactive setup UI."
+log "Verifying the installed command opens an interactive UI."
 if ! TERM=xterm-256color /usr/bin/python3 "$REPO_ROOT/scripts/smoke-test-installed-launcher.py"; then
   fail "The installed /usr/local/bin/petcam command did not remain interactive."
 fi
 log "Installed PetCam at $APP_ROOT."
-log "Verified the installed launcher, interactive setup UI, Python package, and native Live555 library."
+log "Verified the installed launcher, interactive UI, Python package, and native Live555 library."
 log "Run 'petcam' for guided setup or 'petcam -h' for command help."
