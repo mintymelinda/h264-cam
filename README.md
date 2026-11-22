@@ -66,6 +66,10 @@ Live555 queue, and handed to Live555's RTSP media source. Each stage reports IDR
 and non-IDR slice (NAL type 1) counts independently. RTSP-source counts are not a packet-level
 network acknowledgement; they show what Live555 handed to its RTP sink.
 
+For transport diagnosis, this build forces RTSP SETUP requests to use RTP/RTCP interleaved
+over the RTSP TCP connection. Clients do not need to request UDP ports. This is a diagnostic
+override; it is intended to compare playback against the normal UDP transport path.
+
 Optional environment variables can be set before launching `petcam`:
 
 | Variable | Default | Purpose |
