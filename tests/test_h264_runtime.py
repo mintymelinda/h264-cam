@@ -156,8 +156,8 @@ class H264AccessUnitFramingTests(unittest.TestCase):
         self.assertEqual(output, [sps, pps])
 
     def test_large_nal_is_scanned_incrementally_across_pipe_reads(self):
-        prefix = b"\\x00\\x00\\x00\\x01"
-        first_nal = prefix + b"\\x65" + b"x" * 65536
+        prefix = b"\x00\x00\x00\x01"
+        first_nal = prefix + b"\x65" + b"x" * 65536
         framer = AnnexBNalFramer()
 
         self.assertEqual(framer.feed(first_nal), [])
@@ -166,11 +166,11 @@ class H264AccessUnitFramingTests(unittest.TestCase):
         self.assertGreater(framer._scan_offset, previous_offset)
 
         output = []
-        output.extend(framer.feed(b"\\x00\\x00"))
-        output.extend(framer.feed(b"\\x00"))
-        output.extend(framer.feed(b"\\x01\\x41\\x80"))
+        output.extend(framer.feed(b"\x00\x00"))
+        output.extend(framer.feed(b"\x00"))
+        output.extend(framer.feed(b"\x01\x41\x80"))
         self.assertEqual(output, [first_nal])
-        self.assertEqual(framer.flush(), [prefix + b"\\x41\\x80"])
+        self.assertEqual(framer.flush(), [prefix + b"\x41\x80"])
 
     def test_access_unit_metadata_retains_codec_config_for_late_rtsp_clients(self):
         sps = self.nal(0x67, b"\x42\x00\x1e")
