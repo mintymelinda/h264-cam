@@ -36,7 +36,12 @@ petcam -c "USB;1920x1080;30"
 petcam -c "USB;1280x720;30"
 ```
 
-The RTSP endpoint is `rtsp://DEVICE-HOSTNAME:8554/petcam`. USB H.264 is captured
+The RTSP endpoint is `rtsp://DEVICE-HOSTNAME.local:8554/petcam`. The installer includes
+`avahi-daemon`, which publishes the Raspberry Pi hostname over mDNS. The displayed URL
+uses the system hostname with `.local`; set `PETCAM_ADVERTISE_HOST` to override it when
+using a different DNS name. The client must support mDNS/Bonjour name resolution.
+
+USB H.264 is captured
 directly with V4L2; CSI H.264 is captured with `rpicam-vid`. Both paths pass Annex-B
 NAL units to Live555 without decoding or transcoding. New clients start at a cached
 SPS/PPS + IDR boundary.

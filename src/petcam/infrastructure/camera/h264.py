@@ -12,64 +12,79 @@ class H264FramingError(ValueError):
     """Raised when an encoded H.264 boundary cannot be identified safely."""
 
 
-def _start_codes(data: bytearray) -> list[tuple[int, int]]:
-    result = []
-    index = 0
-    while index + 3 <= len(data):
-        if data[index:index + 4] == _START_4:
-            result.append((index, 4))
-            index += 4
-        elif data[index:index + 3] == _START_3:
-            result.append((index, 3))
-            index += 3
-        else:
-            index += 1
-    return result
+def _find_start_code(data: bytearray, start: int = 0) -> tuple[int, int] | None:
+    """Find the next Annex-B prefix using the bytearray's optimized search."""
+    index = data.find(_START_3, start)
+    if index < 0:
+        return None
+    if index > 0 and data[index - 1] == 0:
+        return index - 1, 4
+    return index, 3
 
 
 class AnnexBNalFramer:
-    """Split arbitrary read chunks into complete Annex-B NAL units."""
+    """Split arbitrary read chunks into complete Annex-B NAL units.
+
+    Search progress is retained between reads. Rescanning a growing IDR NAL
+    from byte zero on every pipe read made the previous implementation
+    quadratic in NAL size and could consume an entire ARM core.
+    """
 
     def __init__(self):
         self.buffer = bytearray()
+        self._scan_offset = 0
+        self._start_code_length = 0
 
     def feed(self, chunk: bytes) -> list[bytes]:
+        if not chunk:
+            return []
         self.buffer.extend(chunk)
         output = []
-        while True:
-            starts = _start_codes(self.buffer)
-            if not starts:
+
+        if not self._start_code_length:
+            first = _find_start_code(self.buffer)
+            if first is None:
                 if len(self.buffer) > 3:
                     del self.buffer[:-3]
-                break
-            if starts[0][0]:
-                del self.buffer[:starts[0][0]]
-                continue
-            if len(starts) < 2:
+                return output
+            start, self._start_code_length = first
+            if start:
+                del self.buffer[:start]
+            self._scan_offset = self._start_code_length
+
+        while True:
+            next_start = _find_start_code(self.buffer, self._scan_offset)
+            if next_start is None:
                 if len(self.buffer) > MAX_NAL_BYTES:
                     raise H264FramingError("H.264 NAL unit exceeded the size limit.")
+                # Only the final three bytes can begin a prefix that crosses
+                # the next read boundary. Everything before them was scanned.
+                self._scan_offset = max(self._scan_offset, len(self.buffer) - 3)
                 break
-            boundary = starts[1][0]
-            nal = bytes(self.buffer[:boundary])
-            if len(nal) > starts[0][1]:
-                output.append(nal)
+
+            boundary, next_length = next_start
+            if boundary > self._start_code_length:
+                output.append(bytes(self.buffer[:boundary]))
             del self.buffer[:boundary]
+            self._start_code_length = next_length
+            self._scan_offset = next_length
+
         return output
 
     def flush(self) -> list[bytes]:
-        starts = _start_codes(self.buffer)
-        if not starts:
+        if not self._start_code_length:
             self.buffer.clear()
+            self._scan_offset = 0
             return []
-        if starts[0][0]:
-            del self.buffer[:starts[0][0]]
-            starts = _start_codes(self.buffer)
-        if not starts or len(self.buffer) <= starts[0][1]:
+        if len(self.buffer) <= self._start_code_length:
             self.buffer.clear()
-            return []
-        nal = bytes(self.buffer)
-        self.buffer.clear()
-        return [nal]
+            output = []
+        else:
+            output = [bytes(self.buffer)]
+            self.buffer.clear()
+        self._scan_offset = 0
+        self._start_code_length = 0
+        return output
 
 
 def _nal_header(nal: bytes) -> tuple[int, int]:

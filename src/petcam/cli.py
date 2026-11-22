@@ -10,7 +10,6 @@ import logging
 import math
 import os
 import re
-import socket
 import subprocess
 import sys
 import time
@@ -24,6 +23,7 @@ from .infrastructure.camera.discovery import (
     discover_usb_cameras,
 )
 from .infrastructure.system.metrics import ResourceMetrics
+from .infrastructure.system.hostname import advertised_hostname
 
 RUN_DIR = Path(os.environ.get("PETCAM_RUN", f"/tmp/petcam-{os.getuid()}"))
 CAMERA_STATUS = RUN_DIR / "camera-status.json"
@@ -388,7 +388,7 @@ def run_stream(config: dict, stdscr) -> int:
         else:
             raise RuntimeError("The Live555 H.264 RTSP server did not become ready.")
 
-        url = f"rtsp://{socket.getfqdn()}:{RTSP_PORT}{RTSP_PATH}"
+        url = f"rtsp://{advertised_hostname()}:{RTSP_PORT}{RTSP_PATH}"
         metrics = ResourceMetrics()
         stdscr.timeout(1000)
         while True:

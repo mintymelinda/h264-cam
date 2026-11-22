@@ -9,7 +9,6 @@ import logging
 import os
 import shutil
 import signal
-import socket
 import subprocess
 import threading
 import time
@@ -17,6 +16,7 @@ from pathlib import Path
 
 from ..camera.discovery import detect_hardware_h264_encoder
 from ..camera.h264 import AnnexBNalFramer, H264FramingError
+from ..system.hostname import advertised_hostname
 
 RUN_DIR = Path(os.environ.get("PETCAM_RUN", f"/tmp/petcam-{os.getuid()}"))
 CAMERA_STATUS = RUN_DIR / "camera-status.json"
@@ -247,7 +247,7 @@ def run_server(camera_status: dict) -> int:
         )
         reader = threading.Thread(target=read_capture, name="petcam-h264-capture", daemon=True)
         reader.start()
-        logging.info("H.264 RTSP endpoint: rtsp://%s:%s%s", socket.getfqdn(), RTSP_PORT, RTSP_PATH)
+        logging.info("H.264 RTSP endpoint: rtsp://%s:%s%s", advertised_hostname(), RTSP_PORT, RTSP_PATH)
         while not stop_requested.is_set():
             if capture.poll() is not None:
                 raise Live555Error(f"Camera capture exited with status {capture.returncode}.")

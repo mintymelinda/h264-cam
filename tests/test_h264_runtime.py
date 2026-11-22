@@ -95,7 +95,11 @@ class NativeCaptureTests(unittest.TestCase):
         self.assertIn("--stream-mmap=3", command)
         self.assertIn("--stream-to=-", command)
         self.assertIn("--set-fmt-video=width=1920,height=1080,pixelformat=H264", command)
-        self.assertFalse(any("gst" in part.lower() for part in command))
+        self.assertFalse(any(
+            codec in part.lower()
+            for part in command
+            for codec in ("ffmpeg", "gst", "x264", "openh264", "avdec")
+        ))
 
     def test_non_native_source_is_rejected(self):
         with self.assertRaises(Live555Error):
@@ -151,6 +155,22 @@ class H264AccessUnitFramingTests(unittest.TestCase):
         output.extend(framer.flush())
         self.assertEqual(output, [sps, pps])
 
+    def test_large_nal_is_scanned_incrementally_across_pipe_reads(self):
+        prefix = b"\x00\x00\x00\x01"
+        first_nal = prefix + b"\x65" + b"x" * 131072
+        framer = AnnexBNalFramer()
+
+        self.assertEqual(framer.feed(first_nal[:65541]), [])
+        previous_offset = framer._scan_offset
+        self.assertEqual(framer.feed(first_nal[65541:]), [])
+        self.assertGreater(framer._scan_offset, previous_offset)
+
+        output = []
+        output.extend(framer.feed(b"\x00\x00"))
+        output.extend(framer.feed(b"\x00"))
+        output.extend(framer.feed(b"\x01\x41\x80"))
+        self.assertEqual(output, [first_nal])
+        self.assertEqual(framer.flush(), [prefix + b"\x41\x80"])
 
     def test_access_unit_metadata_retains_codec_config_for_late_rtsp_clients(self):
         sps = self.nal(0x67, b"\x42\x00\x1e")
