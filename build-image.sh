@@ -159,7 +159,7 @@ LOOP_DEVICE=""
 
 FINAL_IMAGE="$OUTPUT_DIR/h264-cam-$VERSION-raspios-lite-armhf.img.xz"
 log "Compressing the customized image."
-xz --threads=0 --compress --force --keep --stdout "$BASE_IMAGE" > "$FINAL_IMAGE"
+xz --threads=0 --compress --fast --force --keep --stdout "$BASE_IMAGE" > "$FINAL_IMAGE"
 [[ -s "$FINAL_IMAGE" ]] || fail "The customized image archive is empty."
 xz --test "$FINAL_IMAGE" || fail "The customized image archive failed its integrity check."
 (cd "$OUTPUT_DIR" && sha256sum "$(basename "$FINAL_IMAGE")" > "$(basename "$FINAL_IMAGE").sha256")
