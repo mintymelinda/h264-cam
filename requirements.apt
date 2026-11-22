@@ -6,3 +6,4 @@ liblivemedia116
 liblivemedia-dev
 g++
 libssl-dev
+avahi-daemon
