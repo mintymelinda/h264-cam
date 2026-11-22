@@ -57,7 +57,16 @@ jobs:
       - name: Build image
         env:
           PETCAM_VERSION: trixie-${{ github.sha }}
-        run: sudo env PETCAM_VERSION="$PETCAM_VERSION" ./build-image.sh "$RUNNER_TEMP/petcam-image"
+          PETCAM_SOURCE_COMMIT: ${{ github.sha }}
+          PETCAM_SOURCE_REF: ${{ github.ref_name }}
+          PETCAM_SOURCE_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}.git
+        run: |
+          sudo env \
+            PETCAM_VERSION="$PETCAM_VERSION" \
+            PETCAM_SOURCE_COMMIT="$PETCAM_SOURCE_COMMIT" \
+            PETCAM_SOURCE_REF="$PETCAM_SOURCE_REF" \
+            PETCAM_SOURCE_REPOSITORY="$PETCAM_SOURCE_REPOSITORY" \
+            ./build-image.sh "$RUNNER_TEMP/petcam-image"
 
       - name: Verify image archive and checksum
         shell: bash
