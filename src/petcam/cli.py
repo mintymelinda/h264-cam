@@ -415,24 +415,53 @@ def run_stream(config: dict, stdscr) -> int:
             else:
                 client_text = str(clients)
             stdscr.addnstr(7, 0, f"RTSP clients: {client_text}", max(1, width - 1))
-            output_rate = status.get("streamed_nals_per_second")
-            if status_stale or not isinstance(output_rate, (int, float)):
-                output_text = "Status unavailable"
-            elif not isinstance(clients, int):
-                output_text = "Client count unavailable"
-            elif clients < 1:
-                output_text = "Waiting for RTSP client"
+            def type_count(field: str, nal_type: int) -> int:
+                values = status.get(field, {})
+                if not isinstance(values, dict):
+                    return 0
+                try:
+                    return int(values.get(str(nal_type), 0))
+                except (TypeError, ValueError):
+                    return 0
+
+            def rate_text(field: str) -> str:
+                value = status.get(field)
+                return f"{value:.1f} NAL/s" if isinstance(value, (int, float)) else "Unavailable"
+
+            if status_stale:
+                capture_text = queue_text = output_text = "Status unavailable"
             else:
-                output_text = f"{output_rate:.1f} NAL/s"
-            stdscr.addnstr(8, 0, f"Stream output: {output_text}", max(1, width - 1))
-            stdscr.addnstr(9, 0, f"Capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264", max(1, width - 1))
-            stdscr.addnstr(11, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
+                capture_text = (
+                    f"{rate_text('captured_nals_per_second')} · "
+                    f"IDR {type_count('captured_nals_by_type', 5)} · "
+                    f"non-IDR {type_count('captured_nals_by_type', 1)}"
+                )
+                queue_text = (
+                    f"{rate_text('queued_nals_per_second')} · "
+                    f"IDR {type_count('queued_nals_by_type', 5)} · "
+                    f"non-IDR {type_count('queued_nals_by_type', 1)}"
+                )
+                if not isinstance(clients, int):
+                    output_text = "Client count unavailable"
+                elif clients < 1:
+                    output_text = "Waiting for RTSP client"
+                else:
+                    output_text = (
+                        f"{rate_text('streamed_nals_per_second')} · "
+                        f"IDR {type_count('rtsp_source_nals_by_type', 5)} · "
+                        f"non-IDR {type_count('rtsp_source_nals_by_type', 1)}"
+                    )
+            stdscr.addnstr(8, 0, f"Camera input: {capture_text}", max(1, width - 1))
+            stdscr.addnstr(9, 0, f"Server queue: {queue_text}", max(1, width - 1))
+            stdscr.addnstr(10, 0, f"RTSP source: {output_text}", max(1, width - 1))
+            stdscr.addnstr(11, 0, f"Capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264", max(1, width - 1))
+            stdscr.addnstr(13, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
             cpu = resources["cpu_percent"]
             cpu_text = f"{cpu:.1f}%" if isinstance(cpu, (int, float)) else "Sampling…"
             used, total = resources["memory_used_mb"], resources["memory_total_mb"]
             memory_text = f"{used} / {total} MB" if used is not None and total is not None else "Unavailable"
-            stdscr.addnstr(12, 0, f"CPU: {cpu_text}", max(1, width - 1))
-            stdscr.addnstr(13, 0, f"Memory: {memory_text}", max(1, width - 1))
+            stdscr.addnstr(14, 0, f"CPU: {cpu_text}", max(1, width - 1))
+            stdscr.addnstr(15, 0, f"Memory: {memory_text}", max(1, width - 1))
             stdscr.addnstr(max(0, height - 1), 0, "Press q to stop the RTSP stream", max(1, width - 1), curses.A_DIM)
             stdscr.refresh()
             key = stdscr.getch()

@@ -30,6 +30,26 @@ Run the guided terminal workflow:
 petcam
 ```
 
+### Keep the stream running after SSH disconnects
+
+The guided interface stays open while the stream is running. Use `tmux` so the terminal
+session and stream continue running after you disconnect SSH:
+
+```sh
+tmux new -s h264-cam
+petcam
+```
+
+Detach without stopping the stream by pressing **Ctrl+B**, then **D**. You can now close SSH.
+When you reconnect, return to the running interface with:
+
+```sh
+tmux attach -t h264-cam
+```
+
+Press `q` inside the PetCam interface when you actually want to stop the stream. This keeps
+the process alive across SSH disconnects; it does not configure automatic startup after reboot.
+
 ## Repair an installed image
 
 The prebuilt image retains the exact release checkout at `/opt/petcam/source/`. To
@@ -59,10 +79,68 @@ The RTSP endpoint is `rtsp://DEVICE-HOSTNAME.local:8554/petcam`. The installer i
 uses the system hostname with `.local`; set `PETCAM_ADVERTISE_HOST` to override it when
 using a different DNS name. The client must support mDNS/Bonjour name resolution.
 
+### Stream diagnostics and experimental capture settings
+
+The terminal status display separates NAL units seen from the camera, accepted into the
+Live555 queue, and handed to Live555's RTSP media source. Each stage reports IDR (NAL type 5)
+and non-IDR slice (NAL type 1) counts independently. RTSP-source counts are not a packet-level
+network acknowledgement; they show what Live555 handed to its RTP sink.
+
+For multi-slice H.264 pictures, PetCam reads `first_mb_in_slice` to recognize the first
+slice of an IDR picture. It places the cached SPS/PPS before that first slice only; it does not
+insert parameter sets between continuation slices of the same picture. This preserves the
+picture's access-unit structure while retaining an SPS/PPS + IDR recovery point for new clients.
+
+PetCam accepts both UDP RTP and RTP interleaved over the RTSP TCP connection. The RTSP client
+selects the transport in its SETUP request; PetCam preserves that request and returns matching
+transport parameters. For VLC, request TCP with:
+
+```sh
+vlc --rtsp-tcp rtsp://DEVICE-HOSTNAME.local:8554/petcam
+```
+
+To verify TCP negotiation and receipt of an interleaved RTP packet without a video player:
+
+```sh
+python3 scripts/check_rtsp_tcp.py rtsp://DEVICE-HOSTNAME.local:8554/petcam
+```
+
+Run this probe from a machine that can reach the camera's RTSP endpoint. It verifies
+RTSP/TCP negotiation and receipt of an interleaved RTP packet from the running stream.
+It is a manual endpoint check, not an installer or image-build test.
+
+Optional environment variables can be set before launching `petcam`:
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `PETCAM_V4L2_MMAP_BUFFERS` | `3` | USB V4L2 MMAP capture buffers (2–32) |
+| `PETCAM_V4L2_STREAM_POLL` | off | Add V4L2 non-blocking poll-based capture |
+| `PETCAM_V4L2_CONTROLS` | unset | Optional integer controls passed to `v4l2-ctl --set-ctrl`, e.g. `video_gop_size=30,video_bitrate=6000000` |
+| `PETCAM_CSI_INTRA` | `30` | CSI H.264 I-frame interval in frames |
+| `PETCAM_CSI_BITRATE` | `8000000` | CSI H.264 target bitrate in bits per second |
+| `PETCAM_LIVE555_FRAMER` | `stream` | Select `stream` (Annex-B byte-stream parser) or experimental `discrete` NAL framing |
+
+For example, to test the optional USB controls and a larger capture ring:
+
+```sh
+PETCAM_V4L2_MMAP_BUFFERS=8 \
+PETCAM_V4L2_CONTROLS='video_gop_size=30,video_bitrate=6000000' \
+petcam
+```
+
+V4L2 encoder controls are driver-specific and are **not** assumed to exist on every USB
+camera. Check that the selected device exposes the named controls before setting them;
+an unsupported control can cause capture startup to fail. The CSI GOP and bitrate settings
+apply only to `rpicam-vid` cameras. The discrete Live555 framer assumes each source item is a
+complete NAL unit; its access-unit marker is approximate for streams that split one picture
+across multiple slices, so it is an experiment rather than the default.
+
 USB H.264 is captured
 directly with V4L2; CSI H.264 is captured with `rpicam-vid`. Both paths pass Annex-B
-NAL units to Live555 without decoding or transcoding. New clients start at a cached
-SPS/PPS + IDR boundary.
+NAL units to Live555 without decoding or transcoding. Only the IDR NAL (type 5) carries
+the `is_idr` marker. When a client joins or the queue loses data, Live555 uses that IDR
+marker to locate the associated SPS/PPS entries immediately before it and resumes from
+that complete recovery sequence.
 
 ## Build an image locally
 

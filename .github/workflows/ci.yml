@@ -43,6 +43,14 @@ jobs:
           PYTHONPATH: src
         run: python3 -m unittest discover -s tests -v
 
+      - name: Test bounded native NAL delivery
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Isrc/petcam/infrastructure/streaming \
+            tests/test_live555_nal_chunks.cpp \
+            -o "$RUNNER_TEMP/test_live555_nal_chunks"
+          "$RUNNER_TEMP/test_live555_nal_chunks"
+
       - name: Build the Live555 shared library
         run: |
           g++ -std=c++17 -O2 -fPIC -shared \
