@@ -47,6 +47,8 @@ jobs:
         run: python3 -m unittest discover -s tests -v
 
       - name: Validate the GStreamer RTSP runtime
+        env:
+          PYTHONPATH: src
         run: |
           python3 -c 'from petcam.infrastructure.streaming.gstreamer import validate_runtime; validate_runtime()'
 
