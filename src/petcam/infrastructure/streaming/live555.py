@@ -244,7 +244,7 @@ class H264Publisher:
         elif nal_type == 8:
             self.pps = payload
         elif nal_type == 5:
-            first_mb = first_mb_in_slice(b"\\x00\\x00\\x00\\x01" + payload)
+            first_mb = first_mb_in_slice(b"\x00\x00\x00\x01" + payload)
             if first_mb == 0:
                 if not self.sps or not self.pps:
                     raise Live555Error("Camera emitted an IDR before SPS and PPS were available.")
