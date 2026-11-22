@@ -71,11 +71,12 @@ grep -Fxq "SOURCE_COMMIT=$EXPECTED_COMMIT" "$ROOTFS/opt/petcam/build-info" || fa
 INSTALLER_SHA256="$(awk -F= '$1 == "INSTALLER_SHA256" { print $2 }' "$ROOTFS/opt/petcam/build-info")"
 [[ "$INSTALLER_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || fail "Image provenance contains an invalid install.sh checksum."
 
-for file in /opt/petcam/src/petcam/cli.py /opt/petcam/lib/libpetcam_live555.so /usr/local/bin/petcam; do
+for file in /opt/petcam/source/install.sh /opt/petcam/src/petcam/cli.py /opt/petcam/lib/libpetcam_live555.so /usr/local/bin/petcam; do
   [[ -s "$ROOTFS$file" ]] || fail "Required installed image file is missing or empty: $file"
 done
 [[ -x "$ROOTFS/usr/local/bin/petcam" ]] || fail "The installed PetCam launcher is not executable."
 [[ -x "$ROOTFS/usr/bin/git" ]] || fail "Git was not installed in the image by the build cycle."
+printf '%s  %s\n' "$INSTALLER_SHA256" "$ROOTFS/opt/petcam/source/install.sh" | sha256sum --check --status || fail "Retained release checkout installer does not match build provenance."
 
 if [[ -n "$CHROOT_EMULATOR" ]]; then
   install -D -m 0755 "$CHROOT_EMULATOR" "$ROOTFS/usr/bin/qemu-arm-static"
