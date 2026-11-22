@@ -416,23 +416,6 @@ def _systemctl(action: str) -> None:
         )
 
 
-def _terminate(process: subprocess.Popen | None) -> None:
-    if process is None or process.poll() is not None:
-        return
-    try:
-        process.terminate()
-    except ProcessLookupError:
-        return
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        try:
-            process.kill()
-        except ProcessLookupError:
-            pass
-        process.wait(timeout=2)
-
-
 def _write_camera_marker(config: dict) -> None:
     marker = {
         "pid": os.getpid(),
@@ -476,55 +459,33 @@ def run_service() -> int:
     os.chmod(RUN_DIR, 0o755)
     CAMERA_STATUS.unlink(missing_ok=True)
     STREAM_STATUS.unlink(missing_ok=True)
-    environment = os.environ.copy()
-    environment.update(saved_environment)
-    environment["PETCAM_RUN"] = str(RUN_DIR)
-    streaming_process = None
-    stopping = threading.Event()
-    previous_handlers = {}
 
-    def request_stop(_signum, _frame) -> None:
-        stopping.set()
+    environment_keys = set(saved_environment) | {"PETCAM_RUN"}
+    previous_environment = {
+        key: os.environ.get(key)
+        for key in environment_keys
+    }
 
     try:
-        for signum in (signal.SIGTERM, signal.SIGINT):
-            previous_handlers[signum] = signal.signal(signum, request_stop)
+        os.environ.update(saved_environment)
+        os.environ["PETCAM_RUN"] = str(RUN_DIR)
         _write_camera_marker(config)
-        streaming_process = subprocess.Popen(
-            [sys.executable, "-m", "petcam.infrastructure.streaming.live555"],
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        start_deadline = time.monotonic() + 25
-        while time.monotonic() < start_deadline and not stopping.is_set():
-            if streaming_process.poll() is not None:
-                raise RuntimeError("The Live555 H.264 RTSP server exited during startup.")
-            status = _read_status()
-            if status.get("state") in {"ready", "publishing"}:
-                break
-            if status.get("state") == "error":
-                raise RuntimeError(status.get("message") or "The Live555 H.264 RTSP server failed.")
-            stopping.wait(0.2)
-        else:
-            if not stopping.is_set():
-                raise RuntimeError("The Live555 H.264 RTSP server did not become ready.")
-            return 0
 
-        while not stopping.wait(0.5):
-            if streaming_process.poll() is not None:
-                raise RuntimeError("The Live555 H.264 RTSP server stopped unexpectedly.")
-            status = _read_status()
-            if status.get("state") == "error":
-                raise RuntimeError(status.get("message") or "The Live555 H.264 RTSP server failed.")
-        return 0
+        # systemd owns this process, so keep the RTSP lifecycle in-process.
+        # Live555 installs its signal handlers on this main thread; its capture
+        # reader remains a separate thread and the camera utility remains a child.
+        from .infrastructure.streaming import live555
+
+        result = live555.main(RUN_DIR)
+        return 0 if result is None else result
     finally:
-        _terminate(streaming_process)
         _remove_camera_marker()
         STREAM_STATUS.unlink(missing_ok=True)
-        for signum, handler in previous_handlers.items():
-            signal.signal(signum, handler)
+        for key, value in previous_environment.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _stream_is_active() -> bool:
