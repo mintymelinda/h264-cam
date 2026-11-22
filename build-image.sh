@@ -10,7 +10,10 @@ log() { printf '[petcam-image] %s\n' "$*"; }
 fail() { printf '[petcam-image] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [[ "$EUID" -eq 0 ]] || fail "Run this image customizer as root (for example: sudo $0 ...)."
-[[ -f "$REPO_ROOT/install.sh" && -f "$REPO_ROOT/requirements.apt" && -f "$REPO_ROOT/requirements.txt" && -f "$REPO_ROOT/src/petcam/cli.py" ]] || fail "Run this script from a complete PetCam source checkout."
+[[ -s "$REPO_ROOT/install.sh" && -s "$REPO_ROOT/requirements.apt" && -s "$REPO_ROOT/requirements.txt" && -s "$REPO_ROOT/src/petcam/cli.py" ]] || fail "Run this script from a complete PetCam source checkout; required installer and application files must be non-empty."
+bash -n "$REPO_ROOT/install.sh" || fail "The source installer has invalid shell syntax."
+[[ -s "$REPO_ROOT/petcam" && -x "$REPO_ROOT/petcam" ]] || fail "The source PetCam launcher is missing, empty, or not executable."
+[[ -s "$REPO_ROOT/scripts/smoke-test-installed-launcher.py" && -s "$REPO_ROOT/scripts/smoke-test-installed-help.py" ]] || fail "Required installed-launcher smoke tests are missing or empty."
 for tool in curl xz losetup mount umount blkid chroot sha256sum; do
   command -v "$tool" >/dev/null 2>&1 || fail "Required host tool is missing: $tool"
 done
@@ -78,9 +81,6 @@ log "Decompressing the verified stock image."
 xz --decompress --threads=0 --keep "$BASE_ARCHIVE"
 [[ -s "$BASE_IMAGE" ]] || fail "The decompressed Raspberry Pi OS image is empty."
 
-# Keep the upstream partition layout and filesystem size. The current
-# runtime adds only a small amount of installed data; avoid inflating every
-# distributed image with an arbitrary 2 GiB of unused capacity.
 LOOP_DEVICE="$(losetup --find --show --partscan "$BASE_IMAGE")"
 if [[ ! -b "${LOOP_DEVICE}p1" || ! -b "${LOOP_DEVICE}p2" ]]; then
   udevadm settle || true
@@ -135,18 +135,29 @@ run_chroot /bin/bash -e -c '
   test "$(getconf LONG_BIT)" = 32
   . /etc/os-release
   test "$VERSION_CODENAME" = trixie
+  test -s /tmp/petcam-installer/install.sh
+  bash -n /tmp/petcam-installer/install.sh
   /tmp/petcam-installer/install.sh
 ' || fail "PetCam installation in the Raspberry Pi OS Trixie image failed."
 
 log "Preserving the complete recovery installer on the image."
 install -d -m 0755 "$ROOTFS/opt/petcam/installer"
 cp -a "$ROOTFS/tmp/petcam-installer/." "$ROOTFS/opt/petcam/installer/"
+cmp -s "$REPO_ROOT/install.sh" "$ROOTFS/opt/petcam/installer/install.sh" || fail "The retained recovery installer differs from the source installer."
+[[ -s "$ROOTFS/opt/petcam/installer/install.sh" ]] || fail "The retained recovery installer is empty."
 cat > "$ROOTFS/opt/petcam/install.sh" <<'PETCAM_INSTALL_WRAPPER'
 #!/bin/sh
 set -eu
 exec /opt/petcam/installer/install.sh "$@"
 PETCAM_INSTALL_WRAPPER
 chmod 0755 "$ROOTFS/opt/petcam/install.sh"
+EXPECTED_WRAPPER="$BUILD_ROOT/expected-recovery-wrapper"
+cat > "$EXPECTED_WRAPPER" <<'PETCAM_INSTALL_WRAPPER'
+#!/bin/sh
+set -eu
+exec /opt/petcam/installer/install.sh "$@"
+PETCAM_INSTALL_WRAPPER
+cmp -s "$EXPECTED_WRAPPER" "$ROOTFS/opt/petcam/install.sh" || fail "The on-device recovery wrapper contents are incorrect."
 rm -rf "$ROOTFS/tmp/petcam-installer"
 
 if (( RESOLV_REPLACED )); then
@@ -159,14 +170,19 @@ run_chroot /bin/bash -e -c 'apt-get clean; rm -rf /var/lib/apt/lists/*'
 
 log "Verifying the final root filesystem after installer staging and cleanup."
 run_chroot /bin/bash -e -c '
+  test -s /opt/petcam/install.sh
   test -x /opt/petcam/install.sh
   test -s /opt/petcam/installer/install.sh
+  test -x /opt/petcam/installer/install.sh
+  bash -n /opt/petcam/install.sh
+  bash -n /opt/petcam/installer/install.sh
   test -s /opt/petcam/installer/requirements.apt
   test -s /opt/petcam/installer/requirements.txt
   test -x /opt/petcam/installer/petcam
   test -s /opt/petcam/installer/src/petcam/cli.py
   test -s /opt/petcam/installer/scripts/smoke-test-installed-launcher.py
   test -s /opt/petcam/installer/scripts/smoke-test-installed-help.py
+  cmp -s /opt/petcam/installer/install.sh /opt/petcam/install.sh && exit 1 || :
   test -x /usr/local/bin/petcam
   test -s /opt/petcam/src/petcam/cli.py
   test -s /opt/petcam/lib/libpetcam_live555.so
