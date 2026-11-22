@@ -1,4 +1,5 @@
 #include <liveMedia.hh>
+#include <liveMedia_version.hh>
 #include <H264VideoStreamDiscreteFramer.hh>
 #include <BasicUsageEnvironment.hh>
 #include <GroupsockHelper.hh>
@@ -168,6 +169,54 @@ private:
   std::size_t currentNalOffset_ = 0;
 };
 
+#if LIVEMEDIA_LIBRARY_VERSION_INT >= 1780272000
+// Live555 2026.06 and newer split client connections from client sessions.
+class TcpOnlyRTSPClientSession final : public RTSPServer::RTSPClientSession {
+public:
+  TcpOnlyRTSPClientSession(RTSPServer& server, u_int32_t sessionId)
+    : RTSPServer::RTSPClientSession(server, sessionId) {}
+  ~TcpOnlyRTSPClientSession() override = default;
+
+protected:
+  void handleCmd_SETUP(
+      RTSPServer::RTSPClientConnection* clientConnection,
+      char const* urlPreSuffix,
+      char const* urlSuffix,
+      char const* fullRequestStr) override {
+    const std::string request = petcam::forceRtpTcpTransport(
+      fullRequestStr == nullptr ? "" : fullRequestStr
+    );
+    RTSPServer::RTSPClientSession::handleCmd_SETUP(
+      clientConnection, urlPreSuffix, urlSuffix, request.c_str()
+    );
+  }
+};
+
+class TcpOnlyRTSPServer final : public RTSPServer {
+public:
+  ~TcpOnlyRTSPServer() override = default;
+
+  static RTSPServer* createNew(UsageEnvironment& env, Port port) {
+    const int socketIPv4 = setUpOurSocket(env, port, AF_INET);
+    const int socketIPv6 = setUpOurSocket(env, port, AF_INET6);
+    if (socketIPv4 < 0 && socketIPv6 < 0) return nullptr;
+    return new TcpOnlyRTSPServer(env, socketIPv4, socketIPv6, port);
+  }
+
+protected:
+  TcpOnlyRTSPServer(
+      UsageEnvironment& env,
+      int socketIPv4,
+      int socketIPv6,
+      Port port)
+    : RTSPServer(env, socketIPv4, socketIPv6, port, nullptr, 65) {}
+
+  RTSPClientSession* createNewClientSession(u_int32_t sessionId) override {
+    return new TcpOnlyRTSPClientSession(*this, sessionId);
+  }
+};
+#else
+// Live555 versions through 2026.05 use the original client-session API.
 class TcpOnlyRTSPClientSession final : public RTSPServer::RTSPClientSession {
 public:
   TcpOnlyRTSPClientSession(
@@ -176,6 +225,7 @@ public:
       int clientSocket,
       struct sockaddr_in clientAddr)
     : RTSPServer::RTSPClientSession(server, sessionId, clientSocket, clientAddr) {}
+  ~TcpOnlyRTSPClientSession() override = default;
 
 protected:
   void handleCmd_SETUP(
@@ -194,6 +244,8 @@ protected:
 
 class TcpOnlyRTSPServer final : public RTSPServer {
 public:
+  ~TcpOnlyRTSPServer() override = default;
+
   static RTSPServer* createNew(UsageEnvironment& env, Port port) {
     const int socket = setUpOurSocket(env, port);
     if (socket < 0) return nullptr;
@@ -213,6 +265,7 @@ protected:
     );
   }
 };
+#endif
 
 class H264Subsession final : public OnDemandServerMediaSubsession {
 public:
