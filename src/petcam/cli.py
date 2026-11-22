@@ -402,18 +402,37 @@ def run_stream(config: dict, stdscr) -> int:
             stdscr.addnstr(2, 0, "RTSP URL", max(1, width - 1), curses.A_BOLD)
             stdscr.addnstr(3, 0, url, max(1, width - 1))
             stdscr.addnstr(5, 0, "STREAM STATUS", max(1, width - 1), curses.A_BOLD)
-            stdscr.addnstr(6, 0, f"RTSP: {status.get('state', 'starting').upper()}", max(1, width - 1))
-            fps = status.get("streamed_fps")
-            fps_text = f"{float(fps):.1f} FPS" if isinstance(fps, (int, float)) else "Waiting for RTSP client"
-            stdscr.addnstr(7, 0, f"Streamed frame rate: {fps_text}", max(1, width - 1))
-            stdscr.addnstr(8, 0, f"Capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264", max(1, width - 1))
-            stdscr.addnstr(10, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
+            status_updated_at = status.get("updated_at")
+            status_stale = (
+                not isinstance(status_updated_at, (int, float))
+                or time.time() - status_updated_at > 3
+            )
+            rtsp_state = "STATUS STALE" if status_stale else status.get("state", "starting").upper()
+            stdscr.addnstr(6, 0, f"RTSP: {rtsp_state}", max(1, width - 1))
+            clients = status.get("rtsp_clients")
+            if status_stale or not isinstance(clients, int):
+                client_text = "Unavailable"
+            else:
+                client_text = str(clients)
+            stdscr.addnstr(7, 0, f"RTSP clients: {client_text}", max(1, width - 1))
+            output_rate = status.get("streamed_nals_per_second")
+            if status_stale or not isinstance(output_rate, (int, float)):
+                output_text = "Status unavailable"
+            elif not isinstance(clients, int):
+                output_text = "Client count unavailable"
+            elif clients < 1:
+                output_text = "Waiting for RTSP client"
+            else:
+                output_text = f"{output_rate:.1f} NAL/s"
+            stdscr.addnstr(8, 0, f"Stream output: {output_text}", max(1, width - 1))
+            stdscr.addnstr(9, 0, f"Capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264", max(1, width - 1))
+            stdscr.addnstr(11, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
             cpu = resources["cpu_percent"]
             cpu_text = f"{cpu:.1f}%" if isinstance(cpu, (int, float)) else "Sampling…"
             used, total = resources["memory_used_mb"], resources["memory_total_mb"]
             memory_text = f"{used} / {total} MB" if used is not None and total is not None else "Unavailable"
-            stdscr.addnstr(11, 0, f"CPU: {cpu_text}", max(1, width - 1))
-            stdscr.addnstr(12, 0, f"Memory: {memory_text}", max(1, width - 1))
+            stdscr.addnstr(12, 0, f"CPU: {cpu_text}", max(1, width - 1))
+            stdscr.addnstr(13, 0, f"Memory: {memory_text}", max(1, width - 1))
             stdscr.addnstr(max(0, height - 1), 0, "Press q to stop the RTSP stream", max(1, width - 1), curses.A_DIM)
             stdscr.refresh()
             key = stdscr.getch()

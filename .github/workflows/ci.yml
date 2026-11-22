@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "fix/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python tests and Live555 native build
+    runs-on: ubuntu-24.04
+    container: debian:sid
+    timeout-minutes: 15
+
+    steps:
+      - name: Install Git and Live555 build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git \
+            ca-certificates \
+            python3 \
+            g++ \
+            liblivemedia-dev \
+            libssl-dev
+
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Validate shell scripts
+        run: bash -n install.sh build-image.sh release.sh
+
+      - name: Compile Python source
+        run: python3 -m compileall -q src tests create-imager-manifest.py
+
+      - name: Run Python unit tests
+        env:
+          PYTHONPATH: src
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Build the Live555 shared library
+        run: |
+          g++ -std=c++17 -O2 -fPIC -shared \
+            -I/usr/include/liveMedia -I/usr/include/groupsock \
+            -I/usr/include/BasicUsageEnvironment -I/usr/include/UsageEnvironment \
+            src/petcam/infrastructure/streaming/live555_server.cpp \
+            -o "$RUNNER_TEMP/libpetcam_live555.so" \
+            -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment -pthread
+          test -s "$RUNNER_TEMP/libpetcam_live555.so"
+          ldd "$RUNNER_TEMP/libpetcam_live555.so"
