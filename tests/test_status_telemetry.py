@@ -70,7 +70,6 @@ class GStreamerRtspTests(unittest.TestCase):
                     f"DESCRIBE rtsp://127.0.0.1:{port}/petcam RTSP/1.0\r\n"
                     "CSeq: 2\r\nAccept: application/sdp\r\n"
                     "User-Agent: PetCam-test\r\n\r\n",
-                    expected_body=True,
                 )
                 self.assertIn(b"RTSP/1.0 200", describe)
                 self.assertIn(b"application/sdp", describe.lower())
