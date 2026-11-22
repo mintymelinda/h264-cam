@@ -48,6 +48,25 @@ class ManagedStreamTests(unittest.TestCase):
             self.assertEqual(cli.main(["--service"]), 23)
         run_service.assert_called_once_with()
 
+    def test_service_reports_missing_saved_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            stream_status = run_dir / "stream-status.json"
+
+            with (
+                patch.object(cli, "RUN_DIR", run_dir),
+                patch.object(cli, "STREAM_STATUS", stream_status),
+                patch.object(cli, "CONFIG_FILE", Path(directory) / "missing.json"),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "No valid saved camera configuration"
+                ):
+                    cli.run_service()
+                status = json.loads(stream_status.read_text(encoding="utf-8"))
+
+            self.assertEqual(status["state"], "error")
+            self.assertIn("missing.json", status["message"])
+
     def test_unprivileged_service_control_uses_narrow_sudo_command(self):
         with (
             patch.object(cli.os, "geteuid", return_value=1000),
