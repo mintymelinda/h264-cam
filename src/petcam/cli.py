@@ -342,6 +342,8 @@ STREAM_ENVIRONMENT_KEYS = (
 def _read_saved_payload() -> tuple[dict, dict[str, str]] | None:
     try:
         payload = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return None
         if "camera" in payload:
             raw_config = payload["camera"]
             raw_environment = payload.get("environment", {})
