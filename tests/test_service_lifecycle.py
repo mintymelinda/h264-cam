@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from petcam import cli
+from petcam.infrastructure.streaming import live555
 
 
 USB_CONFIG = {
@@ -69,7 +71,9 @@ class ManagedStreamTests(unittest.TestCase):
                 self.assertEqual(runtime_directory, run_dir)
                 self.assertEqual(os.environ["PETCAM_RUN"], str(run_dir))
                 self.assertEqual(os.environ["PETCAM_V4L2_MMAP_BUFFERS"], "8")
-                self.assertEqual(os.environ["PETCAM_V4L2_CONTROLS"], "video_bitrate=6000000")
+                self.assertEqual(
+                    os.environ["PETCAM_V4L2_CONTROLS"], "video_bitrate=6000000"
+                )
                 marker = json.loads(camera_status.read_text(encoding="utf-8"))
                 self.assertEqual(marker["pid"], os.getpid())
                 stream_status.write_text("{}\n", encoding="utf-8")
