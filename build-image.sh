@@ -169,7 +169,7 @@ done
 losetup -d "$LOOP_DEVICE"
 LOOP_DEVICE=""
 
-FINAL_IMAGE="$OUTPUT_DIR/petcam-$VERSION-raspios-lite-armhf.img.xz"
+FINAL_IMAGE="$OUTPUT_DIR/h264-cam-$VERSION-raspios-lite-armhf.img.xz"
 log "Compressing the customized image."
 xz --threads=0 --compress --force --keep --stdout "$BASE_IMAGE" > "$FINAL_IMAGE"
 [[ -s "$FINAL_IMAGE" ]] || fail "The customized image archive is empty."
