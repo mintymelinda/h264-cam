@@ -30,6 +30,26 @@ Run the guided terminal workflow:
 petcam
 ```
 
+### Keep the stream running after SSH disconnects
+
+The guided interface stays open while the stream is running. Use `tmux` so the terminal
+session and stream continue running after you disconnect SSH:
+
+```sh
+tmux new -s h264-cam
+petcam
+```
+
+Detach without stopping the stream by pressing **Ctrl+B**, then **D**. You can now close SSH.
+When you reconnect, return to the running interface with:
+
+```sh
+tmux attach -t h264-cam
+```
+
+Press `q` inside the PetCam interface when you actually want to stop the stream. This keeps
+the process alive across SSH disconnects; it does not configure automatic startup after reboot.
+
 ## Repair an installed image
 
 The prebuilt image retains the exact release checkout at `/opt/petcam/source/`. To
