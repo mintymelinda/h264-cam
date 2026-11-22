@@ -8,6 +8,9 @@ fail() { printf '[petcam-install] ERROR: %s\n' "$*" >&2; exit 1; }
 command -v apt-get >/dev/null 2>&1 || fail "Raspberry Pi OS / Debian with apt is required."
 command -v dpkg >/dev/null 2>&1 || fail "dpkg is required."
 [[ -s "$REPO_ROOT/src/petcam/cli.py" && -f "$REPO_ROOT/requirements.apt" && -x "$REPO_ROOT/petcam" ]] || fail "Run this installer from a complete PetCam source checkout with a non-empty CLI module."
+if EMPTY_PYTHON_FILE="$(find "$REPO_ROOT/src/petcam" -type f -name '*.py' -size 0 -print -quit)" && [[ -n "$EMPTY_PYTHON_FILE" ]]; then
+  fail "PetCam Python source file is empty: $EMPTY_PYTHON_FILE"
+fi
 [[ -s "$REPO_ROOT/petcam" ]] || fail "The PetCam launcher source is empty."
 grep -Fq 'exec /usr/bin/python3 -m petcam.cli' "$REPO_ROOT/petcam" || fail "The PetCam launcher source does not invoke the application CLI."
 [[ -f "$REPO_ROOT/src/petcam/infrastructure/streaming/live555_server.cpp" ]] || fail "Live555 installer source files are missing."
@@ -45,8 +48,17 @@ log "Installing the Python application source."
 install -d -m 0755 "$APP_ROOT" /usr/local/bin "$APP_ROOT/lib"
 rm -rf "$APP_ROOT/src"
 cp -a "$REPO_ROOT/src" "$APP_ROOT/src"
-cmp -s "$REPO_ROOT/src/petcam/cli.py" "$APP_ROOT/src/petcam/cli.py" || fail "The installed PetCam CLI module does not match the installer source."
+if ! diff -qr "$REPO_ROOT/src/petcam" "$APP_ROOT/src/petcam"; then
+  fail "The installed PetCam Python package does not match the installer source."
+fi
 chown -R root:root "$APP_ROOT"
+log "Compiling and smoke-testing the installed Python application."
+/usr/bin/python3 -m compileall -q "$APP_ROOT/src/petcam"
+if ! HELP_OUTPUT="$(PYTHONPATH="$APP_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" /usr/bin/python3 -m petcam.cli -h 2>&1)"; then
+  printf '%s\\n' "$HELP_OUTPUT" >&2
+  fail "The installed PetCam Python CLI failed its startup check."
+fi
+grep -Fq "usage: petcam" <<< "$HELP_OUTPUT" || fail "The installed PetCam Python CLI did not produce its expected help output."
 log "Compiling the Live555 RTSP/RTP server for ARMHF."
 g++ -std=c++17 -O2 -fPIC -shared \
   -I/usr/include/liveMedia -I/usr/include/groupsock \
