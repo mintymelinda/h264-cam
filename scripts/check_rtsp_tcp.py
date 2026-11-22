@@ -280,12 +280,12 @@ def probe(
         if expected_nal is not None:
             return connection.wait_for_nal(expected_nal, timeout)
         channel, packet_size = connection.wait_for_rtp(timeout)
-        return channel, packet_size
+        return 1, packet_size, channel
     finally:
         connection.close()
 
 
-def run_self_test(timeout: float) -> tuple[int, int]:
+def run_self_test(timeout: float) -> tuple[int, int, int]:
     from petcam.infrastructure.streaming.live555 import Live555Server
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -333,7 +333,7 @@ def main() -> int:
         parser.error("provide exactly one RTSP URL or --self-test")
 
     try:
-        channel, packet_size = (
+        packet_count, nal_size, timestamp = (
             run_self_test(args.timeout)
             if args.self_test
             else probe(args.url, args.timeout)
@@ -341,10 +341,17 @@ def main() -> int:
     except (OSError, RTSPProbeError, RuntimeError) as error:
         print(f"RTSP/TCP probe FAILED: {error}", file=sys.stderr)
         return 1
-    print(
-        "RTSP/TCP probe PASSED: OPTIONS, DESCRIBE, TCP SETUP, PLAY, "
-        f"and interleaved RTP channel {channel} ({packet_size} bytes)."
-    )
+    if args.self_test:
+        print(
+            "RTSP/TCP probe PASSED: OPTIONS, DESCRIBE, TCP SETUP, PLAY, "
+            f"and byte-exact FU-A reassembly of a {nal_size}-byte NAL "
+            f"across {packet_count} RTP packets (timestamp {timestamp})."
+        )
+    else:
+        print(
+            "RTSP/TCP probe PASSED: OPTIONS, DESCRIBE, TCP SETUP, PLAY, "
+            f"and interleaved RTP channel {timestamp} ({nal_size} bytes)."
+        )
     return 0
 
 
