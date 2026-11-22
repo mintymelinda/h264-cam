@@ -32,23 +32,21 @@ petcam
 
 ### Keep the stream running after SSH disconnects
 
-The guided interface stays open while the stream is running. Use `tmux` so the terminal
-session and stream continue running after you disconnect SSH:
+The RTSP stream runs as a systemd-managed service, independently of the interactive SSH
+terminal. Start it normally:
 
 ```sh
-tmux new -s h264-cam
 petcam
 ```
 
-Detach without stopping the stream by pressing **Ctrl+B**, then **D**. You can now close SSH.
-When you reconnect, return to the running interface with:
+Once the status screen appears, you can close SSH immediately. The stream continues running.
+When you reconnect, run `petcam` again to attach to the active stream's status screen.
+Press `q` there when you actually want to stop the stream. If installation added your login
+account to the `video` group, log out and back in once before starting PetCam.
 
-```sh
-tmux attach -t h264-cam
-```
-
-Press `q` inside the PetCam interface when you actually want to stop the stream. This keeps
-the process alive across SSH disconnects; it does not configure automatic startup after reboot.
+The selected camera mode and supported capture environment options are saved under
+`/var/lib/petcam/`. The service is not enabled for automatic startup after a reboot; run
+`petcam` again after reboot to start it.
 
 ## Repair an installed image
 
