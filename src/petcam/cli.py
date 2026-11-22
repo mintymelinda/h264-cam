@@ -467,15 +467,15 @@ def _write_service_status(
 
 
 def run_service() -> int:
+    RUN_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
+    os.chmod(RUN_DIR, 0o755)
+
     saved = _read_saved_payload()
     if saved is None:
         message = f"No valid saved camera configuration exists at {CONFIG_FILE}."
         _write_service_status("error", None, message)
         raise RuntimeError(message)
     config, saved_environment = saved
-
-    RUN_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
-    os.chmod(RUN_DIR, 0o755)
     CAMERA_STATUS.unlink(missing_ok=True)
     STREAM_STATUS.unlink(missing_ok=True)
     _write_service_status("starting", config)
