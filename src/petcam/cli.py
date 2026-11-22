@@ -447,16 +447,38 @@ def _remove_camera_marker() -> None:
         pass
 
 
-def run_service() -> int:
-    saved = _read_saved_payload()
-    if saved is None:
-        raise RuntimeError(f"No valid saved camera configuration exists at {CONFIG_FILE}.")
-    config, saved_environment = saved
+def _write_service_status(
+    state: str, config: dict | None, message: str = ""
+) -> None:
+    config = config or {}
+    source = config.get("source")
+    payload = {
+        "state": state,
+        "source": source.lower() if isinstance(source, str) else None,
+        "resolution": config.get("resolution"),
+        "capture_fps": config.get("fps"),
+        "rtsp_clients": 0,
+        "updated_at": time.time(),
+        "message": message,
+    }
+    temporary = STREAM_STATUS.with_name(STREAM_STATUS.name + ".tmp")
+    temporary.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    os.replace(temporary, STREAM_STATUS)
 
+
+def run_service() -> int:
     RUN_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
     os.chmod(RUN_DIR, 0o755)
+
+    saved = _read_saved_payload()
+    if saved is None:
+        message = f"No valid saved camera configuration exists at {CONFIG_FILE}."
+        _write_service_status("error", None, message)
+        raise RuntimeError(message)
+    config, saved_environment = saved
     CAMERA_STATUS.unlink(missing_ok=True)
     STREAM_STATUS.unlink(missing_ok=True)
+    _write_service_status("starting", config)
 
     environment_keys = set(saved_environment) | {"PETCAM_RUN"}
     previous_environment = {
@@ -475,10 +497,20 @@ def run_service() -> int:
         from .infrastructure.streaming import live555
 
         result = live555.main(RUN_DIR)
+        if result not in (None, 0):
+            status = _read_status()
+            if status.get("state") != "error":
+                _write_service_status(
+                    "error",
+                    config,
+                    f"Live555 exited with status {result} before the RTSP stream became ready.",
+                )
         return 0 if result is None else result
+    except Exception as error:
+        _write_service_status("error", config, str(error))
+        raise
     finally:
         _remove_camera_marker()
-        STREAM_STATUS.unlink(missing_ok=True)
         for key, value in previous_environment.items():
             if value is None:
                 os.environ.pop(key, None)
