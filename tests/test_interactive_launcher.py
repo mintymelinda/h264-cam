@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import os
-import runpy
 import pty
+import runpy
 import select
 import signal
 import sys
@@ -20,7 +20,15 @@ RENDERED_SCREEN = SMOKE_TEST["rendered_screen"]
 
 @unittest.skipUnless(hasattr(pty, "fork"), "requires POSIX pseudo-terminals")
 class InteractiveLauncherTests(unittest.TestCase):
-    def test_launcher_enters_and_remains_in_configuration_ui(self):
+    def test_smoke_test_recognizes_both_valid_screens(self):
+        self.assertEqual(RENDERED_SCREEN(b"Choose capture mode"), "setup menu")
+        self.assertEqual(
+            RENDERED_SCREEN(b"RTSP URL\\r\\nSTREAM STATUS"),
+            "active-stream status monitor",
+        )
+        self.assertIsNone(RENDERED_SCREEN(b""))
+
+    def test_launcher_enters_and_remains_in_interactive_ui(self):
         child_pid, terminal_fd = pty.fork()
         if child_pid == 0:
             environment = os.environ.copy()
