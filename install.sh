@@ -7,7 +7,7 @@ fail() { printf '[petcam-install] ERROR: %s\n' "$*" >&2; exit 1; }
 [[ "$EUID" -eq 0 ]] || fail "Run as root: sudo $0"
 command -v apt-get >/dev/null 2>&1 || fail "Raspberry Pi OS / Debian with apt is required."
 command -v dpkg >/dev/null 2>&1 || fail "dpkg is required."
-[[ -f "$REPO_ROOT/src/petcam/cli.py" && -f "$REPO_ROOT/requirements.apt" && -x "$REPO_ROOT/petcam" ]] || fail "Run this installer from a complete PetCam source checkout."
+[[ -s "$REPO_ROOT/src/petcam/cli.py" && -f "$REPO_ROOT/requirements.apt" && -x "$REPO_ROOT/petcam" ]] || fail "Run this installer from a complete PetCam source checkout with a non-empty CLI module."
 [[ -s "$REPO_ROOT/petcam" ]] || fail "The PetCam launcher source is empty."
 grep -Fq 'exec /usr/bin/python3 -m petcam.cli' "$REPO_ROOT/petcam" || fail "The PetCam launcher source does not invoke the application CLI."
 [[ -f "$REPO_ROOT/src/petcam/infrastructure/streaming/live555_server.cpp" ]] || fail "Live555 installer source files are missing."
@@ -45,6 +45,7 @@ log "Installing the Python application source."
 install -d -m 0755 "$APP_ROOT" /usr/local/bin "$APP_ROOT/lib"
 rm -rf "$APP_ROOT/src"
 cp -a "$REPO_ROOT/src" "$APP_ROOT/src"
+cmp -s "$REPO_ROOT/src/petcam/cli.py" "$APP_ROOT/src/petcam/cli.py" || fail "The installed PetCam CLI module does not match the installer source."
 chown -R root:root "$APP_ROOT"
 log "Compiling the Live555 RTSP/RTP server for ARMHF."
 g++ -std=c++17 -O2 -fPIC -shared \
@@ -60,9 +61,17 @@ apt-get autoremove -y
 LAUNCHER_TMP="/usr/local/bin/.petcam.${BASHPID}"
 log "Installing and validating the PetCam command launcher."
 install -m 0755 "$REPO_ROOT/petcam" "$LAUNCHER_TMP"
-if ! cmp -s "$REPO_ROOT/petcam" "$LAUNCHER_TMP" || ! "$LAUNCHER_TMP" -h >/dev/null; then
+if ! cmp -s "$REPO_ROOT/petcam" "$LAUNCHER_TMP"; then
   rm -f "$LAUNCHER_TMP"
-  fail "The installed PetCam launcher failed its integrity or CLI startup check."
+  fail "The installed PetCam launcher failed its integrity check."
+fi
+if ! HELP_OUTPUT="$("$LAUNCHER_TMP" -h 2>&1)"; then
+  rm -f "$LAUNCHER_TMP"
+  fail "The PetCam CLI help command failed to start."
+fi
+if ! grep -Fq "usage: petcam" <<< "$HELP_OUTPUT"; then
+  rm -f "$LAUNCHER_TMP"
+  fail "The PetCam CLI did not produce its expected help output; refusing to install a silent no-op launcher."
 fi
 mv -f "$LAUNCHER_TMP" /usr/local/bin/petcam
 [[ -s /usr/local/bin/petcam && -x /usr/local/bin/petcam ]] || fail "The PetCam command launcher was not installed correctly."
