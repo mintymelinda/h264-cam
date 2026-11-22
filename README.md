@@ -32,16 +32,20 @@ petcam
 
 ## Repair an installed image
 
-The prebuilt image retains the complete installer source tree at
-`/opt/petcam/installer/` and provides a convenience entry point at
-`/opt/petcam/install.sh`. To reinstall the application and rebuild its native Live555
-library from the retained source:
+The prebuilt image retains the exact release checkout at `/opt/petcam/source/`. To
+reinstall the application and rebuild its native Live555 library from that checkout:
 
 ```sh
-sudo /opt/petcam/install.sh
+sudo /opt/petcam/source/install.sh
 ```
 
-The recovery installer does not require cloning the repository or downloading another image.
+To install a different source revision, clone it into a separate directory and run its
+top-level installer:
+
+```sh
+sudo git clone https://github.com/mintymelinda/h264-cam.git /opt/petcam/source-new
+sudo /opt/petcam/source-new/install.sh
+```
 
 To select a camera mode directly:
 
