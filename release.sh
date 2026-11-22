@@ -21,15 +21,19 @@ IMAGE_PATH="$OUTPUT_DIR/$IMAGE_NAME"
 CHECKSUM_PATH="$IMAGE_PATH.sha256"
 MANIFEST_PATH="$OUTPUT_DIR/h264-cam-imager-manifest.json"
 RELEASE_DATE="$(date -u +%F)"
+SOURCE_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 IMAGE_URL="$RELEASE_BASE_URL/$IMAGE_NAME"
 
 log "Building the final Raspberry Pi OS Lite Trixie ARMHF image ($VERSION)."
-PETCAM_VERSION="$VERSION" "$REPO_ROOT/build-image.sh" "$OUTPUT_DIR"
+PETCAM_VERSION="$VERSION" PETCAM_SOURCE_COMMIT="$SOURCE_COMMIT" "$REPO_ROOT/build-image.sh" "$OUTPUT_DIR"
 
 [[ -s "$IMAGE_PATH" ]] || fail "Expected final image was not produced: $IMAGE_PATH"
 [[ -s "$CHECKSUM_PATH" ]] || fail "Image checksum sidecar was not produced: $CHECKSUM_PATH"
 xz --test "$IMAGE_PATH"
 (cd "$OUTPUT_DIR" && sha256sum --check "$(basename "$CHECKSUM_PATH")")
+
+log "Inspecting the exact compressed release image and exercising its retained recovery installer."
+"$REPO_ROOT/scripts/verify-image-artifact.sh" "$IMAGE_PATH" "$VERSION" "$SOURCE_COMMIT"
 
 log "Generating the Raspberry Pi Imager OS-list manifest."
 python3 "$REPO_ROOT/create-imager-manifest.py" \
@@ -49,5 +53,6 @@ if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     printf 'manifest_path=%s\n' "$MANIFEST_PATH"
     printf 'image_url=%s\n' "$IMAGE_URL"
     printf 'release_date=%s\n' "$RELEASE_DATE"
+    printf 'source_commit=%s\n' "$SOURCE_COMMIT"
   } >> "$GITHUB_OUTPUT"
 fi
