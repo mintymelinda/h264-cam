@@ -32,19 +32,10 @@ raise SystemExit(0 if GstRtspServer.RTSPServer is not None and all(
 PY
 }
 
-rtsp_status="$(dpkg-query -W -f='${Status}' petcam-gstreamer-rtsp-server 2>/dev/null || true)"
-parser_status="$(dpkg-query -W -f='${Status}' petcam-gstreamer-h264parse 2>/dev/null || true)"
-rtsp_version="$(dpkg-query -W -f='${Version}' petcam-gstreamer-rtsp-server 2>/dev/null || true)"
-parser_version="$(dpkg-query -W -f='${Version}' petcam-gstreamer-h264parse 2>/dev/null || true)"
-installed_version="$(dpkg-query -W -f='${Version}' libgstrtspserver-1.0-0 2>/dev/null || true)"
-installed_parser_version="$(dpkg-query -W -f='${Version}' gstreamer1.0-plugins-bad 2>/dev/null || true)"
-
-if [[ "$rtsp_status" == "install ok installed" && "$parser_status" == "install ok installed" ]] \
-  && [[ "$rtsp_version" == "$installed_version" && "$parser_version" == "$installed_parser_version" ]] \
-  && runtime_available; then
-  log "The minimal GStreamer RTSP server and H.264 parser runtime are already current."
-  exit 0
-fi
+installed_rtsp_status="$(dpkg-query -W -f='${Status}' petcam-gstreamer-rtsp-server 2>/dev/null || true)"
+installed_parser_status="$(dpkg-query -W -f='${Status}' petcam-gstreamer-h264parse 2>/dev/null || true)"
+installed_rtsp_version="$(dpkg-query -W -f='${Version}' petcam-gstreamer-rtsp-server 2>/dev/null || true)"
+installed_parser_version="$(dpkg-query -W -f='${Version}' petcam-gstreamer-h264parse 2>/dev/null || true)"
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
@@ -83,6 +74,14 @@ plugin_version="$(dpkg-deb -f "$plugin_deb" Version)"
 codec_version="$(dpkg-deb -f "$codec_deb" Version)"
 [[ "$rtsp_version" == "$typelib_version" ]] || fail "The RTSP server library and typelib versions do not match."
 [[ "$plugin_version" == "$codec_version" ]] || fail "The H.264 parser plugin and codec-parser library versions do not match."
+
+if [[ "$installed_rtsp_status" == "install ok installed" \
+  && "$installed_parser_status" == "install ok installed" \
+  && "$installed_rtsp_version" == "$rtsp_version" \
+  && "$installed_parser_version" == "$plugin_version" ]] && runtime_available; then
+  log "The minimal GStreamer RTSP server and H.264 parser runtime are already current."
+  exit 0
+fi
 
 rtsp_root="$work_dir/rtsp"
 typelib_root="$work_dir/typelib"
