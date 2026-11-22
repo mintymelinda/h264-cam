@@ -24,6 +24,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             git \
             ca-certificates \
+            python3 \
             g++ \
             liblivemedia-dev \
             libssl-dev
