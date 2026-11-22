@@ -157,8 +157,8 @@ if ldd "$rtsp_library" 2>&1 | grep -Fq "not found"; then
   ldd "$rtsp_library" >&2
   fail "The RTSP server library has unresolved shared-library dependencies."
 fi
-if ldd "$parser_plugin" 2>&1 | grep -Fq "not found"; then
-  ldd "$parser_plugin" >&2
+if LD_LIBRARY_PATH="$codec_root/usr/lib/$multiarch" ldd "$parser_plugin" 2>&1 | grep -Fq "not found"; then
+  LD_LIBRARY_PATH="$codec_root/usr/lib/$multiarch" ldd "$parser_plugin" >&2
   fail "The H.264 parser plugin has unresolved shared-library dependencies."
 fi
 
