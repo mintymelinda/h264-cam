@@ -102,7 +102,70 @@ class ManagedStreamTests(unittest.TestCase):
                 self.assertNotIn("PETCAM_V4L2_CONTROLS", os.environ)
                 self.assertNotIn("PETCAM_RUN", os.environ)
                 self.assertFalse(camera_status.exists())
-                self.assertFalse(stream_status.exists())
+                self.assertTrue(stream_status.exists())
+
+    def test_service_preserves_live555_startup_error_for_terminal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            stream_status = run_dir / "stream-status.json"
+
+            def fail_streamer(_runtime_directory):
+                stream_status.write_text(
+                    json.dumps({
+                        "state": "error",
+                        "message": "synthetic camera startup failure",
+                    }) + "\n",
+                    encoding="utf-8",
+                )
+                return 1
+
+            with (
+                patch.object(cli, "RUN_DIR", run_dir),
+                patch.object(cli, "CAMERA_STATUS", run_dir / "camera-status.json"),
+                patch.object(cli, "STREAM_STATUS", stream_status),
+                patch.object(
+                    cli,
+                    "_read_saved_payload",
+                    return_value=(USB_CONFIG, {}),
+                ),
+                patch.dict(os.environ, {}, clear=True),
+                patch.object(live555, "main", side_effect=fail_streamer),
+            ):
+                self.assertEqual(cli.run_service(), 1)
+                status = json.loads(stream_status.read_text(encoding="utf-8"))
+
+            self.assertEqual(status["state"], "error")
+            self.assertEqual(status["message"], "synthetic camera startup failure")
+
+    def test_service_records_errors_raised_before_live555_returns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            stream_status = run_dir / "stream-status.json"
+
+            with (
+                patch.object(cli, "RUN_DIR", run_dir),
+                patch.object(cli, "CAMERA_STATUS", run_dir / "camera-status.json"),
+                patch.object(cli, "STREAM_STATUS", stream_status),
+                patch.object(
+                    cli,
+                    "_read_saved_payload",
+                    return_value=(USB_CONFIG, {}),
+                ),
+                patch.dict(os.environ, {}, clear=True),
+                patch.object(
+                    live555,
+                    "main",
+                    side_effect=RuntimeError("synthetic service startup failure"),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "synthetic service startup failure"
+                ):
+                    cli.run_service()
+                status = json.loads(stream_status.read_text(encoding="utf-8"))
+
+            self.assertEqual(status["state"], "error")
+            self.assertEqual(status["message"], "synthetic service startup failure")
 
     def test_systemd_unit_owns_stream_process_lifecycle(self):
         unit = Path(__file__).resolve().parents[1] / "systemd" / "petcam.service"
