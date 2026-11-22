@@ -15,7 +15,8 @@ Configure a USB or CSI camera and serve its native H.264 stream over RTSP.
 options:
   -h, --help            show this help message and exit
   -c SOURCE;RESOLUTION;FPS
-                        skip the guided setup (for example: -c\n                        "USB;1920x1080;30")
+                        skip the guided setup (for example: -c
+                        "USB;1920x1080;30")
 
 Examples:
   petcam
