@@ -139,9 +139,9 @@ def create_manifest(
     entry = dict(upstream_entry)
     entry.update(
         {
-            "name": "PetCam — Raspberry Pi OS Lite (32-bit)",
+            "name": "H264 Cam — Raspberry Pi OS Lite (32-bit)",
             "release_date": release_date,
-            "description": "Raspberry Pi OS Lite 32-bit with PetCam preinstalled. Configure hostname, user, password and Wi-Fi in Raspberry Pi Imager before writing.",
+            "description": "Raspberry Pi OS Lite 32-bit with H264 Cam preinstalled. Configure hostname, user, password and Wi-Fi in Raspberry Pi Imager before writing.",
             "url": image_url,
             "image_download_size": compressed_size,
             "image_download_sha256": compressed_sha,
@@ -175,7 +175,7 @@ def main() -> None:
     parser.add_argument("image", type=Path, help="local PetCam .img.xz file")
     parser.add_argument(
         "output", nargs="?", type=Path,
-        help="JSON manifest output path (default: petcam.rpi-imager-manifest.json beside the image)",
+        help="JSON manifest output path (default: h264-cam.rpi-imager-manifest.json beside the image)",
     )
     parser.add_argument(
         "--image-url", required=True,
