@@ -482,6 +482,9 @@ def main(argv: list[str] | None = None) -> int:
     except (ConfigurationError, RuntimeError, OSError) as error:
         print(f"petcam: {error}", file=sys.stderr)
         return 1
+    except curses.error as error:
+        print(f"petcam: terminal interface failed: {error}", file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
         return 130
 
