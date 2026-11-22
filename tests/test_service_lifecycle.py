@@ -67,17 +67,17 @@ class ManagedStreamTests(unittest.TestCase):
             camera_status = run_dir / "camera-status.json"
             stream_status = run_dir / "stream-status.json"
 
-            def run_streamer(runtime_directory):
-                self.assertEqual(runtime_directory, run_dir)
+            def run_streamer(status):
+                self.assertEqual(status["pid"], os.getpid())
+                self.assertEqual(status["device"], USB_CONFIG["device"])
+                self.assertEqual(live555.CAMERA_STATUS, camera_status)
                 self.assertEqual(os.environ["PETCAM_RUN"], str(run_dir))
                 self.assertEqual(os.environ["PETCAM_V4L2_MMAP_BUFFERS"], "8")
                 self.assertEqual(
                     os.environ["PETCAM_V4L2_CONTROLS"], "video_bitrate=6000000"
                 )
-                marker = json.loads(camera_status.read_text(encoding="utf-8"))
-                self.assertEqual(marker["pid"], os.getpid())
-                stream_status.write_text("{}\n", encoding="utf-8")
-                return None
+                live555.write_status("ready", status)
+                return 0
 
             with (
                 patch.object(cli, "RUN_DIR", run_dir),
@@ -92,32 +92,25 @@ class ManagedStreamTests(unittest.TestCase):
                     }),
                 ),
                 patch.dict(os.environ, {"PETCAM_V4L2_MMAP_BUFFERS": "3"}, clear=True),
-                patch.object(live555, "main", side_effect=run_streamer) as stream_main,
+                patch.object(live555, "run_server", side_effect=run_streamer) as stream_runner,
                 patch.object(cli.subprocess, "Popen") as popen,
             ):
                 self.assertEqual(cli.run_service(), 0)
-                stream_main.assert_called_once_with(run_dir)
+                stream_runner.assert_called_once()
                 popen.assert_not_called()
                 self.assertEqual(os.environ["PETCAM_V4L2_MMAP_BUFFERS"], "3")
                 self.assertNotIn("PETCAM_V4L2_CONTROLS", os.environ)
                 self.assertNotIn("PETCAM_RUN", os.environ)
                 self.assertFalse(camera_status.exists())
-                self.assertTrue(stream_status.exists())
+                self.assertEqual(
+                    json.loads(stream_status.read_text(encoding="utf-8"))["state"],
+                    "ready",
+                )
 
     def test_service_preserves_live555_startup_error_for_terminal(self):
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run"
             stream_status = run_dir / "stream-status.json"
-
-            def fail_streamer(_runtime_directory):
-                stream_status.write_text(
-                    json.dumps({
-                        "state": "error",
-                        "message": "synthetic camera startup failure",
-                    }) + "\n",
-                    encoding="utf-8",
-                )
-                return 1
 
             with (
                 patch.object(cli, "RUN_DIR", run_dir),
@@ -129,7 +122,11 @@ class ManagedStreamTests(unittest.TestCase):
                     return_value=(USB_CONFIG, {}),
                 ),
                 patch.dict(os.environ, {}, clear=True),
-                patch.object(live555, "main", side_effect=fail_streamer),
+                patch.object(
+                    live555,
+                    "run_server",
+                    side_effect=RuntimeError("synthetic camera startup failure"),
+                ),
             ):
                 self.assertEqual(cli.run_service(), 1)
                 status = json.loads(stream_status.read_text(encoding="utf-8"))
