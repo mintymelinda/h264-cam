@@ -1,0 +1,2 @@
+# No PyPI dependencies are required.
+# Python uses the standard library; RTSP/RTP is provided by native Live555.
