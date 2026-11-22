@@ -35,6 +35,16 @@ jobs:
     steps:
       - name: Check out pull request source
         uses: actions/checkout@v5
+      - name: Install GStreamer validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi \
+            python3-gst-1.0 \
+            gir1.2-gst-rtsp-server-1.0 \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad
       - name: Validate shell syntax
         run: bash -n release.sh build-image.sh install.sh scripts/verify-image-artifact.sh
       - name: Run Python unit tests
