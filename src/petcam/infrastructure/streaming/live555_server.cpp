@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 #include "nal_chunk.hpp"
+#include "rtsp_transport.hpp"
 
 namespace {
 constexpr std::size_t kMaxNal = 16U * 1024U * 1024U;
@@ -167,6 +168,52 @@ private:
   std::size_t currentNalOffset_ = 0;
 };
 
+class TcpOnlyRTSPClientSession final : public RTSPServer::RTSPClientSession {
+public:
+  TcpOnlyRTSPClientSession(
+      RTSPServer& server,
+      unsigned sessionId,
+      int clientSocket,
+      struct sockaddr_in clientAddr)
+    : RTSPServer::RTSPClientSession(server, sessionId, clientSocket, clientAddr) {}
+
+protected:
+  void handleCmd_SETUP(
+      char const* cseq,
+      char const* urlPreSuffix,
+      char const* urlSuffix,
+      char const* fullRequestStr) override {
+    const std::string request = petcam::forceRtpTcpTransport(
+      fullRequestStr == nullptr ? "" : fullRequestStr
+    );
+    RTSPServer::RTSPClientSession::handleCmd_SETUP(
+      cseq, urlPreSuffix, urlSuffix, request.c_str()
+    );
+  }
+};
+
+class TcpOnlyRTSPServer final : public RTSPServer {
+public:
+  static RTSPServer* createNew(UsageEnvironment& env, Port port) {
+    const int socket = setUpOurSocket(env, port);
+    if (socket < 0) return nullptr;
+    return new TcpOnlyRTSPServer(env, socket, port);
+  }
+
+protected:
+  TcpOnlyRTSPServer(UsageEnvironment& env, int socket, Port port)
+    : RTSPServer(env, socket, port, nullptr, 65) {}
+
+  RTSPClientSession* createNewClientSession(
+      unsigned sessionId,
+      int clientSocket,
+      struct sockaddr_in clientAddr) override {
+    return new TcpOnlyRTSPClientSession(
+      *this, sessionId, clientSocket, clientAddr
+    );
+  }
+};
+
 class H264Subsession final : public OnDemandServerMediaSubsession {
 public:
   static H264Subsession* createNew(UsageEnvironment& env) { return new H264Subsession(env); }
@@ -202,7 +249,7 @@ void serve(unsigned short port, std::string path) {
   OutPacketBuffer::maxSize = static_cast<unsigned>(kMaxNal + 4);
   TaskScheduler* localScheduler = BasicTaskScheduler::createNew();
   UsageEnvironment* env = BasicUsageEnvironment::createNew(*localScheduler);
-  RTSPServer* server = env ? RTSPServer::createNew(*env, Port(port), nullptr) : nullptr;
+  RTSPServer* server = env ? TcpOnlyRTSPServer::createNew(*env, Port(port)) : nullptr;
   ServerMediaSession* session = nullptr;
   if (server) {
     while (!path.empty() && path.front() == '/') path.erase(path.begin());
