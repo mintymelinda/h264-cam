@@ -195,11 +195,11 @@ class NativeCaptureTests(unittest.TestCase):
             def push_nal(self, nal, is_idr=False):
                 self.nals.append((nal, is_idr))
 
-        prefix = b"\\x00\\x00\\x00\\x01"
-        sps = b"\\x67\\x42\\x00\\x1e"
-        pps = b"\\x68\\xce\\x06"
-        idr_first = b"\\x65\\xe0"  # first_mb_in_slice = 0
-        idr_continuation = b"\\x65\\x58"  # first_mb_in_slice = 1
+        prefix = b"\x00\x00\x00\x01"
+        sps = b"\x67\x42\x00\x1e"
+        pps = b"\x68\xce\x06"
+        idr_first = b"\x65\xe0"  # first_mb_in_slice = 0
+        idr_continuation = b"\x65\x58"  # first_mb_in_slice = 1
 
         server = FakeServer()
         publisher = H264Publisher(server)
@@ -222,8 +222,8 @@ class NativeCaptureTests(unittest.TestCase):
         ])
 
     def test_first_mb_in_slice_distinguishes_picture_start_from_continuation(self):
-        self.assertEqual(first_mb_in_slice(self.nal(0x65, b"\\xe0")), 0)
-        self.assertEqual(first_mb_in_slice(self.nal(0x65, b"\\x58")), 1)
+        self.assertEqual(first_mb_in_slice(self.nal(0x65, b"\xe0")), 0)
+        self.assertEqual(first_mb_in_slice(self.nal(0x65, b"\x58")), 1)
 
 class H264AccessUnitFramingTests(unittest.TestCase):
     @staticmethod
