@@ -235,7 +235,7 @@ def set_alsa_capture_volume(device: str, gain_percent: int = 100) -> None:
 
 
 def build_audio_capture_command(camera_status: dict | None = None) -> list[str] | None:
-    """Capture the configured signed PCM mode for the Live555 Opus audio track."""
+    """Capture the configured signed PCM mode for the Live555 L16 audio track."""
     if os.environ.get("PETCAM_AUDIO", "1").strip().lower() in {"0", "false", "no", "off"}:
         return None
     if not shutil.which("arecord"):
