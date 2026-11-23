@@ -87,12 +87,11 @@ To verify TCP negotiation and receipt of an interleaved RTP packet without a vid
 python3 scripts/check_rtsp_tcp.py rtsp://DEVICE-HOSTNAME.local:8554/petcam
 ```
 
-The installer and CI run the same probe against a local Live555 instance using synthetic H.264
-NAL units. The self-test includes a 256 KiB IDR NAL that must be fragmented into RTP FU-A packets
-and reassembled byte-for-byte, with contiguous sequence numbers, one RTP timestamp, and the
-access-unit marker on the final fragment. The probe also buffers interleaved RTCP/RTP frames
-between RTSP control responses. This verifies TCP packet delivery and packetization, but does
-not assess the camera's visual decoding quality.
+CI runs a local Live555 microphone-track self-test using synthetic PCM frames. It verifies
+the RTSP audio SDP, TCP SETUP and PLAY negotiation, and receipt of a 20 ms PCMU RTP packet.
+This test deliberately does not open a camera or microphone device, so it runs in a hardware-free
+CI environment. To probe an actual camera stream, pass its RTSP URL to
+`scripts/check_rtsp_tcp.py`; this checks RTSP/TCP negotiation and receipt of video RTP data.
 
 Optional environment variables can be set before launching `petcam`:
 
