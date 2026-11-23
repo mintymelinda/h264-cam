@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import socket
 import sys
+import threading
 import time
 from urllib.parse import urljoin, urlsplit
 
@@ -114,36 +115,42 @@ class RTSPConnection:
 
     def wait_for_rtp(self, timeout: float) -> tuple[int, int]:
         deadline = time.monotonic() + timeout
+        channel, packet = self._read_interleaved_frame(deadline, channel=0)
+        if len(packet) < 12:
+            raise RTSPProbeError("Received an invalid RTP packet.")
+        return channel, len(packet)
+
+    def wait_for_audio(self, timeout: float) -> tuple[int, int]:
+        deadline = time.monotonic() + timeout
+        channel, packet = self._read_interleaved_frame(deadline, channel=2)
+        _, timestamp, _, _payload_type, payload = self._rtp_payload(packet)
+        if len(payload) != 160:
+            raise RTSPProbeError(
+                f"Expected a 160-byte 20 ms PCMU payload, received {len(payload)} bytes."
+            )
+        return len(payload), timestamp
+
+    def _read_interleaved_frame(
+        self,
+        deadline: float,
+        channel: int | None = None,
+    ) -> tuple[int, bytes]:
         while time.monotonic() < deadline:
-            if len(self._buffer) >= 4 and self._buffer[0] == ord("$"):
-                channel = self._buffer[1]
-                packet_size = int.from_bytes(self._buffer[2:4], "big")
-                if len(self._buffer) >= packet_size + 4:
-                    del self._buffer[:4]
-                    del self._buffer[:packet_size]
-                    if channel == 0:
-                        return channel, packet_size
-                    continue
-            remaining = max(0.05, deadline - time.monotonic())
-            self._socket.settimeout(remaining)
+            for index, frame in enumerate(self._interleaved_frames):
+                if channel is None or frame[0] == channel:
+                    del self._interleaved_frames[index]
+                    return frame
+            frame = self._extract_interleaved_frame()
+            if frame is not None:
+                if channel is None or frame[0] == channel:
+                    return frame
+                self._interleaved_frames.append(frame)
+                continue
+            self._socket.settimeout(max(0.05, deadline - time.monotonic()))
             try:
                 self._receive()
             except socket.timeout:
                 break
-        raise RTSPProbeError(
-            f"RTSP/TCP SETUP and PLAY succeeded, but no interleaved RTP packet "
-            f"arrived within {timeout:g} seconds."
-        )
-
-    def _read_interleaved_frame(self, deadline: float) -> tuple[int, bytes]:
-        if self._interleaved_frames:
-            return self._interleaved_frames.pop(0)
-        while time.monotonic() < deadline:
-            frame = self._extract_interleaved_frame()
-            if frame is not None:
-                return frame
-            self._socket.settimeout(max(0.05, deadline - time.monotonic()))
-            self._receive()
         raise RTSPProbeError("Timed out waiting for an interleaved RTP frame.")
 
     @staticmethod
@@ -172,7 +179,8 @@ class RTSPConnection:
         sequence = int.from_bytes(packet[2:4], "big")
         timestamp = int.from_bytes(packet[4:8], "big")
         marker = (packet[1] & 0x80) != 0
-        return sequence, timestamp, int(marker), packet[header_size:payload_end]
+        payload_type = packet[1] & 0x7F
+        return sequence, timestamp, int(marker), payload_type, packet[header_size:payload_end]
 
     def wait_for_nal(self, expected_nal: bytes, timeout: float) -> tuple[int, int, int]:
         deadline = time.monotonic() + timeout
@@ -182,10 +190,8 @@ class RTSPConnection:
         fragment_packets = 0
 
         while time.monotonic() < deadline:
-            channel, packet = self._read_interleaved_frame(deadline)
-            if channel != 0:
-                continue  # Ignore RTCP on interleaved channel 1.
-            sequence, timestamp, marker, payload = self._rtp_payload(packet)
+            channel, packet = self._read_interleaved_frame(deadline, channel=0)
+            sequence, timestamp, marker, _payload_type, payload = self._rtp_payload(packet)
             nal_type = payload[0] & 0x1F
 
             if nal_type == 28:  # H.264 FU-A
@@ -243,6 +249,7 @@ def probe(
     url: str,
     timeout: float = 5.0,
     expected_nal: bytes | None = None,
+    require_audio: bool = False,
 ) -> tuple[int, int, int]:
     connection = RTSPConnection(url, timeout)
     try:
@@ -256,17 +263,30 @@ def probe(
         if status != 200:
             raise RTSPProbeError(f"DESCRIBE failed with RTSP status {status}.")
 
-        control = next(
-            (
-                line.partition(":")[2].strip()
-                for line in sdp.decode("utf-8", "replace").splitlines()
-                if line.lower().startswith("a=control:")
-                and line.partition(":")[2].strip() != "*"
-            ),
-            None,
-        )
+        sdp_lines = sdp.decode("utf-8", "replace").splitlines()
+        control = None
+        audio_control = None
+        audio_codec_found = False
+        current_media = None
+        for line in sdp_lines:
+            if line.lower().startswith("m="):
+                current_media = line[2:].split(" ", 1)[0].lower()
+            elif line.lower().startswith("a=control:"):
+                media_control = line.partition(":")[2].strip()
+                if media_control == "*":
+                    continue
+                if current_media == "audio":
+                    audio_control = media_control
+                elif current_media == "video" and control is None:
+                    control = media_control
+            elif current_media == "audio" and line.lower().startswith("a=rtpmap:"):
+                if "PCMU/8000" in line.upper():
+                    audio_codec_found = True
+
         if not control:
-            raise RTSPProbeError("DESCRIBE SDP did not advertise a media control URL.")
+            raise RTSPProbeError("DESCRIBE SDP did not advertise a video media control URL.")
+        if not audio_control or not audio_codec_found:
+            raise RTSPProbeError("DESCRIBE SDP did not advertise the PCMU/8000 microphone audio track.")
         content_base = describe_headers.get("content-base", url.rstrip("/") + "/")
         if not content_base.endswith("/"):
             content_base += "/"
@@ -291,13 +311,39 @@ def probe(
         if not session:
             raise RTSPProbeError("TCP SETUP succeeded without an RTSP Session header.")
 
+        if require_audio:
+            audio_track_url = urljoin(content_base, audio_control)
+            audio_status, audio_headers, _ = connection.request(
+                "SETUP",
+                audio_track_url,
+                {
+                    "Transport": "RTP/AVP/TCP;unicast;interleaved=2-3",
+                    "Session": session,
+                },
+            )
+            if audio_status != 200:
+                raise RTSPProbeError(
+                    f"Audio TCP SETUP failed with RTSP status {audio_status}."
+                )
+            audio_transport = audio_headers.get("transport", "")
+            if "RTP/AVP/TCP" not in audio_transport.upper() or "interleaved=2-3" not in audio_transport.lower():
+                raise RTSPProbeError(
+                    f"Server returned an unexpected audio TCP Transport header: {audio_transport!r}"
+                )
+            audio_session = audio_headers.get("session", "").split(";", 1)[0]
+            if audio_session and audio_session != session:
+                raise RTSPProbeError("Video and audio tracks were assigned different RTSP sessions.")
+
         status, _, _ = connection.request(
             "PLAY", url, {"Session": session, "Range": "npt=0.000-"}
         )
         if status != 200:
             raise RTSPProbeError(f"PLAY failed with RTSP status {status}.")
         if expected_nal is not None:
-            return connection.wait_for_nal(expected_nal, timeout)
+            video_result = connection.wait_for_nal(expected_nal, timeout)
+            if require_audio:
+                connection.wait_for_audio(timeout)
+            return video_result
         channel, packet_size = connection.wait_for_rtp(timeout)
         return 1, packet_size, channel
     finally:
@@ -313,17 +359,38 @@ def run_self_test(timeout: float) -> tuple[int, int, int]:
 
     server = Live555Server()
     server.start(port, "/petcam")
+    stop_audio = threading.Event()
+
+    def publish_test_audio() -> None:
+        frame = bytes(320)
+        next_frame = time.monotonic()
+        while not stop_audio.is_set():
+            server.push_audio_pcm(frame)
+            next_frame += 0.02
+            stop_audio.wait(max(0.0, next_frame - time.monotonic()))
+
+    audio_thread = threading.Thread(target=publish_test_audio, name="pcmu-self-test", daemon=True)
     try:
         # A large synthetic IDR forces Live555 to fragment the NAL into FU-A
         # RTP packets. The TCP probe reassembles those packets and compares
-        # every NAL byte with this source buffer.
+        # every NAL byte with this source buffer. A concurrent synthetic PCM
+        # source proves that the second RTSP track negotiates and delivers PCMU.
+        audio_thread.start()
         large_idr = bytes([0x65, 0x80]) + bytes([0x55]) * (256 * 1024 - 2)
         server.push_nal(bytes.fromhex("6742001f95a814016e40"))
         server.push_nal(bytes.fromhex("68ce06e2"))
         server.push_nal(large_idr, is_idr=True)
         server.push_nal(bytes.fromhex("41803344"))
-        return probe(f"rtsp://127.0.0.1:{port}/petcam", timeout, large_idr)
+        return probe(
+            f"rtsp://127.0.0.1:{port}/petcam",
+            timeout,
+            large_idr,
+            require_audio=True,
+        )
     finally:
+        stop_audio.set()
+        if audio_thread.is_alive():
+            audio_thread.join(timeout=1)
         server.stop()
 
 
@@ -364,7 +431,8 @@ def main() -> int:
         print(
             "RTSP/TCP probe PASSED: OPTIONS, DESCRIBE, TCP SETUP, PLAY, "
             f"and byte-exact FU-A reassembly of a {nal_size}-byte NAL "
-            f"across {packet_count} RTP packets (timestamp {timestamp})."
+            f"across {packet_count} RTP packets (timestamp {timestamp}), "
+            "plus a live 160-byte PCMU audio RTP payload."
         )
     else:
         print(
