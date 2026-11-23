@@ -60,6 +60,14 @@ jobs:
             -o "$RUNNER_TEMP/test_live555_opus"
           "$RUNNER_TEMP/test_live555_opus"
 
+      - name: Test shared audio/video presentation clock
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Isrc/petcam/infrastructure/streaming \
+            tests/test_presentation_clock.cpp \
+            -o "$RUNNER_TEMP/test_presentation_clock"
+          "$RUNNER_TEMP/test_presentation_clock"
+
       - name: Build the Live555 shared library
         run: |
           g++ -std=c++17 -O2 -fPIC -shared \
