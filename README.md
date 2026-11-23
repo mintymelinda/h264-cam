@@ -1,7 +1,7 @@
 # H264 Cam
 
 H264 Cam serves a camera's native H.264 capture stream over RTSP using Live555. The same
-RTSP session includes a stereo Opus microphone audio track captured through ALSA at
+RTSP session includes a stereo uncompressed L16 PCM microphone audio track captured through ALSA at
 48 kHz; automatic device selection prefers the Razer Kiyo microphone. PetCam does not
 decode or transcode the video, or provide a web interface, motion processing, timelapse,
 or Home Assistant
@@ -23,8 +23,7 @@ sudo ./install.sh
 ```
 
 The installer reads the Debian package list from `requirements.apt`. It installs the
-Python standard library runtime, camera and audio utilities, Live555 and Opus development
-libraries, and the native compiler needed to build PetCam's Live555 server. There are no
+Python standard library runtime, camera and audio utilities, Live555 development libraries, and the native compiler needed to build PetCam's Live555 server. There are no
 third-party Python packages to install: the application uses the Python standard library
 and its RTSP/RTP implementation is the native Live555 library. The compiler and
 development packages remain installed; the installer deliberately does not run package
@@ -92,7 +91,7 @@ python3 scripts/check_rtsp_tcp.py rtsp://DEVICE-HOSTNAME.local:8554/petcam
 ```
 
 CI runs a local Live555 microphone-track self-test using synthetic PCM frames. It verifies
-the RTSP audio SDP, TCP SETUP and PLAY negotiation, and receipt of a 20 ms Opus RTP packet.
+the RTSP audio SDP, TCP SETUP and PLAY negotiation, and receipt of a 5 ms L16 RTP packet.
 This test deliberately does not open a camera or microphone device, so it runs in a hardware-free
 CI environment. To probe an actual camera stream, pass its RTSP URL to
 `scripts/check_rtsp_tcp.py`; this checks RTSP/TCP negotiation and receipt of video RTP data.
