@@ -56,6 +56,7 @@ def validate_config(value: dict[str, Any]) -> dict[str, Any]:
         channels = int(audio.get("channels", 2))
         bitrate = int(audio.get("bitrate", 128000))
         packet_ms = float(audio.get("packet_ms", 20))
+        capture_gain_percent = int(audio.get("capture_gain_percent", 100))
     except (TypeError, ValueError) as error:
         raise ConfigurationError("Audio settings must be numeric.") from error
     if sample_rate not in {8000, 12000, 16000, 24000, 48000}:
@@ -66,6 +67,8 @@ def validate_config(value: dict[str, Any]) -> dict[str, Any]:
         raise ConfigurationError("Opus bitrate must be between 6000 and 510000 bit/s.")
     if packet_ms not in {2.5, 5, 10, 20, 40, 60}:
         raise ConfigurationError("Opus packet duration must be 2.5, 5, 10, 20, 40, or 60 ms.")
+    if not 0 <= capture_gain_percent <= 100:
+        raise ConfigurationError("Microphone capture gain must be between 0 and 100 percent.")
     normalized["audio"] = {
         "sample_rate": sample_rate,
         "channels": channels,
@@ -73,6 +76,7 @@ def validate_config(value: dict[str, Any]) -> dict[str, Any]:
         "output_codec": str(audio.get("output_codec", "OPUS")).upper(),
         "bitrate": bitrate,
         "packet_ms": packet_ms,
+        "capture_gain_percent": capture_gain_percent,
         "device": str(audio.get("device", "auto")),
     }
     if normalized["audio"]["input_format"] != "S16_LE":

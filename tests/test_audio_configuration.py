@@ -27,14 +27,25 @@ class AudioConfigurationTests(unittest.TestCase):
                     "output_codec": "OPUS",
                     "bitrate": 128000,
                     "packet_ms": packet_ms,
+                    "capture_gain_percent": 75,
                     "device": "plughw:1,0",
                 }))
                 self.assertEqual(normalized["audio"]["packet_ms"], packet_ms)
+                self.assertEqual(normalized["audio"]["capture_gain_percent"], 75)
                 self.assertEqual(normalized["audio"]["device"], "plughw:1,0")
 
     def test_rejects_non_opus_packet_duration(self) -> None:
         with self.assertRaises(ConfigurationError):
             validate_config(self.base_config({"packet_ms": 15}))
+
+    def test_defaults_legacy_audio_configuration_to_full_capture_gain(self) -> None:
+        normalized = validate_config(self.base_config({}))
+        self.assertEqual(normalized["audio"]["capture_gain_percent"], 100)
+
+    def test_rejects_capture_gain_outside_percentage_range(self) -> None:
+        for gain in (-1, 101):
+            with self.subTest(gain=gain), self.assertRaises(ConfigurationError):
+                validate_config(self.base_config({"capture_gain_percent": gain}))
 
     def test_pcm_framer_uses_selected_rate_channels_and_packet_duration(self) -> None:
         framer = PcmAudioFramer(sample_rate=48000, channels=1, packet_ms=2.5)
