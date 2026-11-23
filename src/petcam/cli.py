@@ -249,45 +249,37 @@ def configure_audio(stdscr) -> dict:
     capabilities = discover_audio_capabilities()
     rates = capabilities["sample_rates"]
     index = select_menu(stdscr, "Step 4 · Audio sample rate",
-        "Choose an Opus-compatible ALSA capture rate.",
+        "Choose the ALSA capture rate for uncompressed PCM audio.",
         [str(rate // 1000) + " kHz" for rate in rates])
     if index is None:
         raise KeyboardInterrupt
     sample_rate = rates[index]
     index = select_menu(stdscr, "Step 5 · Audio channels",
-        "The Opus track supports mono or stereo.",
+        "L16 PCM supports mono or stereo.",
         ["Mono" if count == 1 else "Stereo" for count in capabilities["channels"]])
     if index is None:
         raise KeyboardInterrupt
     channels = capabilities["channels"][index]
-    index = select_menu(stdscr, "Step 6 · Input codec",
-        "The capture path accepts signed 16-bit PCM; ALSA plug performs hardware conversion.",
+    index = select_menu(stdscr, "Step 6 · Input format",
+        "The capture path accepts signed 16-bit little-endian PCM.",
         ["S16_LE PCM"])
     if index is None:
         raise KeyboardInterrupt
     input_format = "S16_LE"
     index = select_menu(stdscr, "Step 7 · Output codec",
-        "Opus is the currently implemented RTSP audio codec.",
-        ["Opus"])
+        "L16 sends uncompressed 16-bit PCM samples over RTP.",
+        ["PCM (L16)"])
     if index is None:
         raise KeyboardInterrupt
-    output_codec = "OPUS"
-    bitrates = [64000, 96000, 128000, 160000, 192000, 256000]
-    index = select_menu(stdscr, "Step 8 · Output bitrate",
-        "Select the encoded network bitrate.",
-        [str(rate // 1000) + " kbit/s" for rate in bitrates])
+    output_codec = "L16"
+    packet_ms = 5
+    index = select_menu(stdscr, "Step 8 · RTP packet duration",
+        "L16 uses 5 ms packets to keep 48 kHz stereo payloads below a typical Ethernet MTU.",
+        ["5 ms"])
     if index is None:
         raise KeyboardInterrupt
-    bitrate = bitrates[index]
-    durations = [2.5, 5, 10, 20, 40, 60]
-    index = select_menu(stdscr, "Step 9 · Opus packet duration",
-        "20 ms is the default. Only legal Opus packet durations are offered.",
-        [str(duration) + " ms" for duration in durations])
-    if index is None:
-        raise KeyboardInterrupt
-    packet_ms = durations[index]
     gain_options = [75, 100, 50, 25, 0]
-    index = select_menu(stdscr, "Step 10 · Microphone capture gain",
+    index = select_menu(stdscr, "Step 9 · Microphone capture gain",
         "Sets the ALSA microphone capture level. Start at 75%; reduce it if audio clips.",
         [str(gain) + "%" for gain in gain_options])
     if index is None:
@@ -295,8 +287,7 @@ def configure_audio(stdscr) -> dict:
     capture_gain_percent = gain_options[index]
     return {"sample_rate": sample_rate, "channels": channels,
             "input_format": input_format, "output_codec": output_codec,
-            "bitrate": bitrate, "packet_ms": packet_ms,
-            "capture_gain_percent": capture_gain_percent,
+            "packet_ms": packet_ms, "capture_gain_percent": capture_gain_percent,
             "device": capabilities.get("device", "auto")}
 
 
@@ -382,11 +373,11 @@ def guided_configuration(stdscr) -> dict:
                 continue
             confirm_index = select_menu(
                 stdscr,
-                "Step 11 · Confirm stream",
+                "Step 10 · Confirm stream",
                 f"{_camera_label(source, camera)}\n{mode['resolution']} at {mode['fps']:g} FPS · H.264\n"
                 f"Audio: {audio['sample_rate']} Hz, {audio['channels']} ch, "
                 f"{audio['input_format']} -> {audio['output_codec']} "
-                f"{audio['bitrate'] // 1000} kbit/s, {audio['packet_ms']:g} ms\n"
+                f"{audio['packet_ms']:g} ms, uncompressed\n"
                 f"Microphone capture gain: {audio['capture_gain_percent']}%",
                 ["Activate RTSP stream", "Return to capture mode selection"],
             )
@@ -422,14 +413,14 @@ def _audio_capture_mode_label(audio: dict) -> str:
     return f"Audio capture mode: {sample_rate // 1000} kHz · {channel_label} · {input_format}"
 
 
-def _opus_framing_label(audio: dict) -> str:
-    """Show PCM frame size and the corresponding Opus RTP-clock duration."""
+def _pcm_framing_label(audio: dict) -> str:
+    """Show uncompressed PCM samples and L16 RTP packet duration."""
     sample_rate = int(audio.get("sample_rate", 48000))
     packet_ms = float(audio.get("packet_ms", 20))
     pcm_samples = round(sample_rate * packet_ms / 1000)
     rtp_ticks = round(48000 * packet_ms / 1000)
     return (
-        f"Opus packetization: {packet_ms:g} ms · "
+        f"L16 RTP packetization: {packet_ms:g} ms · "
         f"{pcm_samples} PCM samples/ch · {rtp_ticks} RTP ticks"
     )
 
@@ -627,7 +618,7 @@ def run_stream(config: dict, stdscr) -> int:
             stdscr.addnstr(11, 0, f"Camera capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264", max(1, width - 1))
             audio_config = config.get("audio", {})
             stdscr.addnstr(12, 0, _audio_capture_mode_label(audio_config), max(1, width - 1))
-            stdscr.addnstr(13, 0, _opus_framing_label(audio_config), max(1, width - 1))
+            stdscr.addnstr(13, 0, _pcm_framing_label(audio_config), max(1, width - 1))
             stdscr.addnstr(15, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
             cpu = resources["cpu_percent"]
             cpu_text = f"{cpu:.1f}%" if isinstance(cpu, (int, float)) else "Sampling…"
