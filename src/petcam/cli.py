@@ -285,9 +285,18 @@ def configure_audio(stdscr) -> dict:
         [str(duration) + " ms" for duration in durations])
     if index is None:
         raise KeyboardInterrupt
+    packet_ms = durations[index]
+    gain_options = [75, 100, 50, 25]
+    index = select_menu(stdscr, "Step 10 · Microphone capture gain",
+        "Sets the ALSA microphone capture level. Start at 75%; reduce it if audio clips.",
+        [str(gain) + "%" for gain in gain_options])
+    if index is None:
+        raise KeyboardInterrupt
+    capture_gain_percent = gain_options[index]
     return {"sample_rate": sample_rate, "channels": channels,
             "input_format": input_format, "output_codec": output_codec,
-            "bitrate": bitrate, "packet_ms": durations[index],
+            "bitrate": bitrate, "packet_ms": packet_ms,
+            "capture_gain_percent": capture_gain_percent,
             "device": capabilities.get("device", "auto")}
 
 
@@ -373,11 +382,12 @@ def guided_configuration(stdscr) -> dict:
                 continue
             confirm_index = select_menu(
                 stdscr,
-                "Step 10 · Confirm stream",
+                "Step 11 · Confirm stream",
                 f"{_camera_label(source, camera)}\n{mode['resolution']} at {mode['fps']:g} FPS · H.264\n"
                 f"Audio: {audio['sample_rate']} Hz, {audio['channels']} ch, "
                 f"{audio['input_format']} -> {audio['output_codec']} "
-                f"{audio['bitrate'] // 1000} kbit/s, {audio['packet_ms']:g} ms",
+                f"{audio['bitrate'] // 1000} kbit/s, {audio['packet_ms']:g} ms\n"
+                f"Microphone capture gain: {audio['capture_gain_percent']}%",
                 ["Activate RTSP stream", "Return to capture mode selection"],
             )
             if confirm_index == 0:
@@ -401,6 +411,27 @@ def guided_configuration(stdscr) -> dict:
                 })
             # Confirm's second option or Esc returns to Step 1.
             break
+
+
+def _audio_capture_mode_label(audio: dict) -> str:
+    """Format the configured ALSA input mode for the live status display."""
+    sample_rate = int(audio.get("sample_rate", 48000))
+    channels = int(audio.get("channels", 2))
+    channel_label = {1: "Mono", 2: "Stereo"}.get(channels, f"{channels} ch")
+    input_format = str(audio.get("input_format", "S16_LE"))
+    return f"Audio capture mode: {sample_rate // 1000} kHz · {channel_label} · {input_format}"
+
+
+def _opus_framing_label(audio: dict) -> str:
+    """Show PCM frame size and the corresponding Opus RTP-clock duration."""
+    sample_rate = int(audio.get("sample_rate", 48000))
+    packet_ms = float(audio.get("packet_ms", 20))
+    pcm_samples = round(sample_rate * packet_ms / 1000)
+    rtp_ticks = round(48000 * packet_ms / 1000)
+    return (
+        f"Opus packetization: {packet_ms:g} ms · "
+        f"{pcm_samples} PCM samples/ch · {rtp_ticks} RTP ticks"
+    )
 
 
 def _read_log(path: Path = STREAM_LOG) -> list[str]:
@@ -593,14 +624,17 @@ def run_stream(config: dict, stdscr) -> int:
             stdscr.addnstr(8, 0, f"Camera input: {capture_text}", max(1, width - 1))
             stdscr.addnstr(9, 0, f"Server queue: {queue_text}", max(1, width - 1))
             stdscr.addnstr(10, 0, f"RTSP source: {output_text}", max(1, width - 1))
-            stdscr.addnstr(11, 0, f"Capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264", max(1, width - 1))
-            stdscr.addnstr(13, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
+            stdscr.addnstr(11, 0, f"Camera capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264", max(1, width - 1))
+            audio_config = config.get("audio", {})
+            stdscr.addnstr(12, 0, _audio_capture_mode_label(audio_config), max(1, width - 1))
+            stdscr.addnstr(13, 0, _opus_framing_label(audio_config), max(1, width - 1))
+            stdscr.addnstr(15, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
             cpu = resources["cpu_percent"]
             cpu_text = f"{cpu:.1f}%" if isinstance(cpu, (int, float)) else "Sampling…"
             used, total = resources["memory_used_mb"], resources["memory_total_mb"]
             memory_text = f"{used} / {total} MB" if used is not None and total is not None else "Unavailable"
-            stdscr.addnstr(14, 0, f"CPU: {cpu_text}", max(1, width - 1))
-            stdscr.addnstr(15, 0, f"Memory: {memory_text}", max(1, width - 1))
+            stdscr.addnstr(16, 0, f"CPU: {cpu_text}", max(1, width - 1))
+            stdscr.addnstr(17, 0, f"Memory: {memory_text}", max(1, width - 1))
             stdscr.addnstr(max(0, height - 1), 0, "l: view live log · q: stop RTSP stream", max(1, width - 1), curses.A_DIM)
             stdscr.refresh()
             key = stdscr.getch()
