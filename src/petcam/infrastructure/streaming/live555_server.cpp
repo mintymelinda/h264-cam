@@ -202,6 +202,10 @@ private:
     if (!cursorSet_) {
       auto recovery = findRecoveryStartAtOrAfterTime(sessionStart_->captureTime);
       if (recovery != queue.end()) {
+        // If the original recovery point aged out before PLAY, move the shared
+        // anchor to the actual recovery point this video source can deliver.
+        sessionStart_->captureTime = (recovery + 2)->enqueuedAt;
+        sessionStart_->videoStartReady = true;
         cursor_ = recovery->seq;
         cursorSet_ = true;
       }
@@ -276,6 +280,12 @@ private:
       std::lock_guard<std::mutex> lock(audioQueueMutex);
       if (!audioQueue.empty()) {
         if (!cursorSet_) {
+          // Wait until this session's video source has selected its actual IDR
+          // recovery point; audio must not independently choose a newer edge.
+          if (!sessionStart_->videoStartReady) {
+            nextTask() = envir().taskScheduler().scheduleDelayedTask(5000, retry, this);
+            return;
+          }
           auto start = petcam::firstAtOrAfter(audioQueue.begin(), audioQueue.end(),
             sessionStart_->captureTime,
             [](const AudioFrame& item) { return item.capturedAt; });
