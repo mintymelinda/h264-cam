@@ -43,7 +43,6 @@ jobs:
             gir1.2-gstreamer-1.0 \
             gir1.2-gst-plugins-base-1.0 \
             gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good
       - name: Validate shell syntax
         run: bash -n release.sh build-image.sh install.sh scripts/verify-image-artifact.sh scripts/install-gstreamer-runtime.sh
       - name: Install the minimal GStreamer RTSP and H.264 runtime
