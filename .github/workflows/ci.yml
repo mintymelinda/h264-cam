@@ -28,7 +28,6 @@ jobs:
             g++ \
             liblivemedia-dev \
             libopus-dev \
-            libssl-dev
 
       - name: Check out source
         uses: actions/checkout@v5
