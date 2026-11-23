@@ -229,7 +229,7 @@ private:
       std::lock_guard<std::mutex> lock(audioQueueMutex);
       if (!audioQueue.empty()) {
         if (!cursorSet_) {
-          cursor_ = audioQueue.front().seq;
+          cursor_ = audioQueue.back().seq;
           cursorSet_ = true;
         }
         auto it = std::find_if(audioQueue.begin(), audioQueue.end(),
