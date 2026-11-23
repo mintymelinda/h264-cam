@@ -43,6 +43,11 @@ class GStreamerRtspTests(unittest.TestCase):
                     time.sleep(0.002)
                 self.assertIn(b"RTSP/1.0 200", response)
                 self.assertIn(b"Public:", response)
+                self.assertEqual(server.client_count, 1)
+                self.assertEqual(
+                    server.factory.get_protocols(),
+                    server.GstRtspServer.RTSPLowerTrans.TCP,
+                )
         finally:
             server.stop()
 
