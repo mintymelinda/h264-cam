@@ -19,11 +19,13 @@
 #include <utility>
 #include <vector>
 #include "nal_chunk.hpp"
+#include "presentation_clock.hpp"
 
 namespace {
 constexpr std::size_t kMaxNal = 16U * 1024U * 1024U;
 constexpr std::size_t kMaxQueue = 16U * 1024U * 1024U;
 constexpr auto kMaxQueueAge = std::chrono::seconds(3);
+const petcam::PresentationClock presentationClock;
 struct Nal {
   std::uint64_t seq;
   std::vector<unsigned char> data;
@@ -34,7 +36,11 @@ std::mutex queueMutex, lifecycleMutex;
 std::deque<Nal> queue;
 std::size_t queueBytes = 0;
 std::mutex audioQueueMutex;
-struct AudioFrame { std::uint64_t seq; std::vector<unsigned char> data; };
+struct AudioFrame {
+  std::uint64_t seq;
+  std::vector<unsigned char> data;
+  std::chrono::steady_clock::time_point capturedAt;
+};
 std::deque<AudioFrame> audioQueue;
 std::uint64_t audioSequence = 1;
 int kAudioSampleRate = 48000;
@@ -159,7 +165,7 @@ private:
       currentNal_.clear();
       currentNalOffset_ = 0;
     }
-    gettimeofday(&fPresentationTime, nullptr);
+    fPresentationTime = presentationClock.toTimeval(currentPresentationTime_);
     fDurationInMicroseconds = 0;
     FramedSource::afterGetting(this);
   }
@@ -193,12 +199,14 @@ private:
     if (it == queue.end()) return;
 
     currentNal_ = it->data;
+    currentPresentationTime_ = it->enqueuedAt;
     currentNalOffset_ = 0;
     cursor_ = it->seq + 1;
   }
   std::uint64_t cursor_ = 0;
   bool cursorSet_ = false;
   bool includeStartCode_;
+  std::chrono::steady_clock::time_point currentPresentationTime_{};
   std::vector<unsigned char> currentNal_;
   std::size_t currentNalOffset_ = 0;
 };
@@ -232,6 +240,7 @@ private:
   void deliver() {
     if (!isCurrentlyAwaitingData()) return;
     std::vector<unsigned char> frame;
+    std::chrono::steady_clock::time_point capturedAt{};
     {
       std::lock_guard<std::mutex> lock(audioQueueMutex);
       if (!audioQueue.empty()) {
@@ -247,6 +256,7 @@ private:
         }
         if (it->seq != cursor_) cursor_ = it->seq;
         frame = it->data;
+        capturedAt = it->capturedAt;
         cursor_ = it->seq + 1;
       }
     }
@@ -258,7 +268,7 @@ private:
     std::memcpy(fTo, frame.data(), size);
     fFrameSize = static_cast<unsigned>(size);
     fNumTruncatedBytes = static_cast<unsigned>(frame.size() - size);
-    gettimeofday(&fPresentationTime, nullptr);
+    fPresentationTime = presentationClock.toTimeval(capturedAt);
     fDurationInMicroseconds = static_cast<unsigned>(kAudioPacketMs10 * 100);
     FramedSource::afterGetting(this);
   }
@@ -426,6 +436,7 @@ int petcam_start(unsigned short port, const char* path) {
 
 int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
   if (!data || size != kAudioFrameBytes) return -1;
+  const auto capturedAt = std::chrono::steady_clock::now();
   std::vector<opus_int16> pcm(static_cast<std::size_t>(kAudioFrameSamples * kAudioChannels));
   for (std::size_t i = 0; i < pcm.size(); ++i) {
     const std::size_t offset = i * 2;
@@ -448,7 +459,7 @@ int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
   );
   if (encodedSize <= 0) return -1;
   std::vector<unsigned char> packet(encoded.begin(), encoded.begin() + encodedSize);
-  audioQueue.push_back(AudioFrame{audioSequence++, std::move(packet)});
+  audioQueue.push_back(AudioFrame{audioSequence++, std::move(packet), capturedAt});
   const auto maxFrames = static_cast<std::size_t>(20000 / kAudioPacketMs10);
   while (audioQueue.size() > maxFrames) audioQueue.pop_front();
   return 0;
