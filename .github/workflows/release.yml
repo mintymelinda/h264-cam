@@ -35,8 +35,17 @@ jobs:
     steps:
       - name: Check out pull request source
         uses: actions/checkout@v5
+      - name: Install GStreamer validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi \
+            gir1.2-gstreamer-1.0 \
+            libgstreamer-plugins-base1.0-0
       - name: Validate shell syntax
-        run: bash -n release.sh build-image.sh install.sh scripts/verify-image-artifact.sh
+        run: bash -n release.sh build-image.sh install.sh scripts/verify-image-artifact.sh scripts/install-gstreamer-runtime.sh
+      - name: Install the minimal GStreamer RTSP and H.264 runtime
+        run: sudo bash scripts/install-gstreamer-runtime.sh
       - name: Run Python unit tests
         env:
           PYTHONPATH: src
@@ -150,7 +159,7 @@ jobs:
           body: |
             H264 Cam for Raspberry Pi OS Lite (32-bit ARMHF), based on Raspberry Pi OS Trixie.
 
-            The image is built on an ARM GitHub Actions runner. The build decompresses the official Raspberry Pi OS image, enters its ARMHF userspace with QEMU, installs Git, clones this exact release tag, and runs the repository's top-level sudo ./install.sh. The finished compressed artifact is then extracted and its installed application and native Live555 library are verified.
+            The image is built on an ARM GitHub Actions runner. The build decompresses the official Raspberry Pi OS image, enters its ARMHF userspace with QEMU, installs Git, clones this exact release tag, and runs the repository's top-level sudo ./install.sh. The finished compressed artifact is then extracted and its installed application and GStreamer RTSP runtime are verified.
 
             /opt/petcam/build-info records the exact source commit, release version, and SHA-256 of the installer used during the build.
 

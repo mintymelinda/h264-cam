@@ -6,15 +6,10 @@ from __future__ import annotations
 import argparse
 import curses
 import json
-import logging
 import math
-import os
 import re
-import subprocess
 import sys
-import tempfile
 import time
-from pathlib import Path
 
 from .configuration import ConfigurationError, validate_config
 from .domain.camera.capabilities import mode_fps_values
@@ -23,15 +18,10 @@ from .infrastructure.camera.discovery import (
     discover_csi_cameras,
     discover_usb_cameras,
 )
+from .infrastructure.streaming.gstreamer import GStreamerSession, RTSP_PORT, RTSP_PATH
 from .infrastructure.system.metrics import ResourceMetrics
 from .infrastructure.system.hostname import advertised_hostname
 
-RUN_DIR = Path(os.environ.get("PETCAM_RUN", "/run/petcam"))
-CONFIG_FILE = Path(os.environ.get("PETCAM_CONFIG", "/var/lib/petcam/stream.json"))
-CAMERA_STATUS = RUN_DIR / "camera-status.json"
-STREAM_STATUS = RUN_DIR / "stream-status.json"
-RTSP_PORT = 8554
-RTSP_PATH = "/petcam"
 HOTPLUG = object()
 
 
@@ -319,319 +309,60 @@ def guided_configuration(stdscr) -> dict:
             break
 
 
-def _read_status() -> dict:
-    try:
-        payload = json.loads(STREAM_STATUS.read_text(encoding="utf-8"))
-        return payload if isinstance(payload, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-STREAM_ENVIRONMENT_KEYS = (
-    "PETCAM_V4L2_MMAP_BUFFERS",
-    "PETCAM_V4L2_STREAM_POLL",
-    "PETCAM_V4L2_CONTROLS",
-    "PETCAM_CSI_INTRA",
-    "PETCAM_CSI_BITRATE",
-    "PETCAM_LIVE555_FRAMER",
-)
-
-
-def _read_saved_payload() -> tuple[dict, dict[str, str]] | None:
-    try:
-        payload = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict):
-            return None
-        if "camera" in payload:
-            raw_config = payload["camera"]
-            raw_environment = payload.get("environment", {})
-        else:
-            raw_config = payload
-            raw_environment = {}
-        if not isinstance(raw_environment, dict):
-            return None
-        environment = {
-            key: str(raw_environment[key])
-            for key in STREAM_ENVIRONMENT_KEYS
-            if key in raw_environment
-        }
-        return validate_config(raw_config), environment
-    except (OSError, ValueError, TypeError, ConfigurationError):
-        return None
-
-
-def _read_saved_config() -> dict | None:
-    saved = _read_saved_payload()
-    return saved[0] if saved is not None else None
-
-
-def _save_config(config: dict) -> None:
-    CONFIG_FILE.parent.mkdir(mode=0o2770, parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            prefix=".stream-",
-            suffix=".tmp",
-            dir=CONFIG_FILE.parent,
-            delete=False,
-        ) as handle:
-            json.dump({
-                "camera": config,
-                "environment": {
-                    key: os.environ[key]
-                    for key in STREAM_ENVIRONMENT_KEYS
-                    if key in os.environ
-                },
-            }, handle)
-            handle.write("\n")
-            os.fchmod(handle.fileno(), 0o660)
-            temporary = Path(handle.name)
-        os.replace(temporary, CONFIG_FILE)
-    except OSError as error:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"Unable to save the camera configuration at {CONFIG_FILE}: {error}. "
-            "The login account must belong to the video group; log out and back in "
-            "after installing PetCam if that group was just added."
-        ) from error
-
-
-def _systemctl(action: str) -> None:
-    if action not in {"start", "stop", "restart"}:
-        raise ValueError(f"Unsupported PetCam service action: {action}")
-    command = ["/usr/bin/systemctl", action, "petcam.service"]
-    if os.geteuid() != 0:
-        command = ["/usr/bin/sudo", "-n", *command]
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        raise RuntimeError(
-            f"Unable to {action} the PetCam system service"
-            + (f": {detail}" if detail else ".")
-        )
-
-
-def _write_camera_marker(config: dict) -> None:
-    marker = {
-        "pid": os.getpid(),
-        "backend": config["source"].lower(),
-        "resolution": config["resolution"],
-        "fps": config["fps"],
-        "native_h264": True,
-    }
-    if config["source"] == "USB":
-        marker.update(
-            device=config["device"],
-            physical_path=config.get("physical_path", ""),
-        )
-    else:
-        marker.update(
-            camera=config["camera"],
-            sensor=config.get("sensor", ""),
-            device_path=config.get("device_path", ""),
-        )
-    temporary = CAMERA_STATUS.with_name(CAMERA_STATUS.name + ".tmp")
-    temporary.write_text(json.dumps(marker) + "\n", encoding="utf-8")
-    os.replace(temporary, CAMERA_STATUS)
-
-
-def _remove_camera_marker() -> None:
-    try:
-        marker = json.loads(CAMERA_STATUS.read_text(encoding="utf-8"))
-        if marker.get("pid") == os.getpid():
-            CAMERA_STATUS.unlink(missing_ok=True)
-    except (OSError, ValueError):
-        pass
-
-
-def _write_service_status(
-    state: str, config: dict | None, message: str = ""
-) -> None:
-    config = config or {}
-    source = config.get("source")
-    payload = {
-        "state": state,
-        "source": source.lower() if isinstance(source, str) else None,
-        "resolution": config.get("resolution"),
-        "capture_fps": config.get("fps"),
-        "rtsp_clients": 0,
-        "updated_at": time.time(),
-        "message": message,
-    }
-    temporary = STREAM_STATUS.with_name(STREAM_STATUS.name + ".tmp")
-    temporary.write_text(json.dumps(payload) + "\n", encoding="utf-8")
-    os.replace(temporary, STREAM_STATUS)
-
-
-def run_service() -> int:
-    RUN_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
-    os.chmod(RUN_DIR, 0o755)
-
-    saved = _read_saved_payload()
-    if saved is None:
-        message = f"No valid saved camera configuration exists at {CONFIG_FILE}."
-        _write_service_status("error", None, message)
-        raise RuntimeError(message)
-    config, saved_environment = saved
-    CAMERA_STATUS.unlink(missing_ok=True)
-    STREAM_STATUS.unlink(missing_ok=True)
-    _write_service_status("starting", config)
-
-    environment_keys = set(saved_environment) | {"PETCAM_RUN"}
-    previous_environment = {
-        key: os.environ.get(key)
-        for key in environment_keys
-    }
-
-    try:
-        os.environ.update(saved_environment)
-        os.environ["PETCAM_RUN"] = str(RUN_DIR)
-        _write_camera_marker(config)
-
-        # systemd owns this process, so keep the RTSP lifecycle in-process.
-        # Live555 installs its signal handlers on this main thread; its capture
-        # reader remains a separate thread and the camera utility remains a child.
-        from .infrastructure.streaming import live555
-
-        result = live555.main(RUN_DIR)
-        if result not in (None, 0):
-            status = _read_status()
-            if status.get("state") != "error":
-                _write_service_status(
-                    "error",
-                    config,
-                    f"Live555 exited with status {result} before the RTSP stream became ready.",
-                )
-        return 0 if result is None else result
-    except Exception as error:
-        _write_service_status("error", config, str(error))
-        raise
-    finally:
-        _remove_camera_marker()
-        for key, value in previous_environment.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
-
-def _stream_is_active() -> bool:
-    status = _read_status()
-    updated_at = status.get("updated_at")
-    return (
-        status.get("state") in {"ready", "publishing"}
-        and isinstance(updated_at, (int, float))
-        and time.time() - updated_at <= 3
-    )
-
-
-def _monitor_stream(config: dict, stdscr) -> int:
-    url = f"rtsp://{advertised_hostname()}:{RTSP_PORT}{RTSP_PATH}"
-    metrics = ResourceMetrics()
-    stdscr.timeout(1000)
-    while True:
-        status = _read_status()
-        resources = metrics.sample()
-        height, width = stdscr.getmaxyx()
-        stdscr.erase()
-        stdscr.addnstr(0, 0, "PetCam · H.264 RTSP", max(1, width - 1), curses.A_BOLD)
-        stdscr.addnstr(2, 0, "RTSP URL", max(1, width - 1), curses.A_BOLD)
-        stdscr.addnstr(3, 0, url, max(1, width - 1))
-        stdscr.addnstr(5, 0, "STREAM STATUS", max(1, width - 1), curses.A_BOLD)
-        status_updated_at = status.get("updated_at")
-        status_stale = (
-            not isinstance(status_updated_at, (int, float))
-            or time.time() - status_updated_at > 3
-        )
-        rtsp_state = "STATUS STALE" if status_stale else status.get("state", "starting").upper()
-        stdscr.addnstr(6, 0, f"RTSP: {rtsp_state}", max(1, width - 1))
-        clients = status.get("rtsp_clients")
-        if status_stale or not isinstance(clients, int):
-            client_text = "Unavailable"
-        else:
-            client_text = str(clients)
-        stdscr.addnstr(7, 0, f"RTSP clients: {client_text}", max(1, width - 1))
-
-        def type_count(field: str, nal_type: int) -> int:
-            values = status.get(field, {})
-            if not isinstance(values, dict):
-                return 0
-            try:
-                return int(values.get(str(nal_type), 0))
-            except (TypeError, ValueError):
-                return 0
-
-        def rate_text(field: str) -> str:
-            value = status.get(field)
-            return f"{value:.1f} NAL/s" if isinstance(value, (int, float)) else "Unavailable"
-
-        if status_stale:
-            capture_text = queue_text = output_text = "Status unavailable"
-        else:
-            capture_text = (
-                f"{rate_text('captured_nals_per_second')} · "
-                f"IDR {type_count('captured_nals_by_type', 5)} · "
-                f"non-IDR {type_count('captured_nals_by_type', 1)}"
-            )
-            queue_text = (
-                f"{rate_text('queued_nals_per_second')} · "
-                f"IDR {type_count('queued_nals_by_type', 5)} · "
-                f"non-IDR {type_count('queued_nals_by_type', 1)}"
-            )
-            if not isinstance(clients, int):
-                output_text = "Client count unavailable"
-            elif clients < 1:
-                output_text = "Waiting for RTSP client"
-            else:
-                output_text = (
-                    f"{rate_text('streamed_nals_per_second')} · "
-                    f"IDR {type_count('rtsp_source_nals_by_type', 5)} · "
-                    f"non-IDR {type_count('rtsp_source_nals_by_type', 1)}"
-                )
-        stdscr.addnstr(8, 0, f"Camera input: {capture_text}", max(1, width - 1))
-        stdscr.addnstr(9, 0, f"Server queue: {queue_text}", max(1, width - 1))
-        stdscr.addnstr(10, 0, f"RTSP source: {output_text}", max(1, width - 1))
-        stdscr.addnstr(11, 0, f"Capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264", max(1, width - 1))
-        stdscr.addnstr(13, 0, "SYSTEM RESOURCES", max(1, width - 1))
-        cpu = resources["cpu_percent"]
-        cpu_text = f"{cpu:.1f}%" if isinstance(cpu, (int, float)) else "Sampling…"
-        used, total = resources["memory_used_mb"], resources["memory_total_mb"]
-        memory_text = f"{used} / {total} MB" if used is not None and total is not None else "Unavailable"
-        stdscr.addnstr(14, 0, f"CPU: {cpu_text}", max(1, width - 1))
-        stdscr.addnstr(15, 0, f"Memory: {memory_text}", max(1, width - 1))
-        stdscr.addnstr(max(0, height - 1), 0, "Press q to stop the RTSP stream", max(1, width - 1))
-        stdscr.refresh()
-        key = stdscr.getch()
-        if key in (ord("q"), ord("Q"), 27):
-            _systemctl("stop")
-            return 0
-
-
 def run_stream(config: dict, stdscr) -> int:
-    _save_config(config)
-    _systemctl("restart")
-    start_deadline = time.monotonic() + 30
-    while time.monotonic() < start_deadline:
-        status = _read_status()
-        if status.get("state") in {"ready", "publishing"}:
-            return _monitor_stream(config, stdscr)
-        if status.get("state") == "error":
-            raise RuntimeError(status.get("message") or "The Live555 H.264 RTSP server failed.")
-        time.sleep(0.2)
-    raise RuntimeError("The PetCam system service did not publish a ready RTSP stream within 30 seconds.")
+    session = GStreamerSession(config)
+    try:
+        session.start()
+        url = f"rtsp://{advertised_hostname()}:{RTSP_PORT}{RTSP_PATH}"
+        metrics = ResourceMetrics()
+        stdscr.timeout(500)
+        while True:
+            session.iterate()
+            status = session.snapshot()
+            if status["state"] == "error":
+                raise RuntimeError(status["message"] or "The GStreamer stream failed.")
+            resources = metrics.sample()
+            height, width = stdscr.getmaxyx()
+            stdscr.erase()
+            stdscr.addnstr(0, 0, "PetCam · H.264 RTSP", max(1, width - 1), curses.A_BOLD)
+            stdscr.addnstr(2, 0, "RTSP URL", max(1, width - 1), curses.A_BOLD)
+            stdscr.addnstr(3, 0, url, max(1, width - 1))
+            stdscr.addnstr(5, 0, "STREAM STATUS", max(1, width - 1), curses.A_BOLD)
+            stdscr.addnstr(6, 0, f"GStreamer RTSP: {status['state'].upper()}", max(1, width - 1))
+            stdscr.addnstr(7, 0, f"RTSP clients: {status['clients']}", max(1, width - 1))
+            input_rate = status["capture_bytes_per_second"] / (1024 * 1024)
+            input_total = status["capture_bytes_total"] / (1024 * 1024)
+            stdscr.addnstr(8, 0, f"Camera input: {input_rate:.2f} MiB/s", max(1, width - 1))
+            stdscr.addnstr(9, 0, f"Data received: {input_total:.1f} MiB", max(1, width - 1))
+            stdscr.addnstr(
+                10, 0,
+                f"Capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264",
+                max(1, width - 1),
+            )
+            stdscr.addnstr(12, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
+            cpu = resources["cpu_percent"]
+            cpu_text = f"{cpu:.1f}%" if isinstance(cpu, (int, float)) else "Sampling…"
+            used, total = resources["memory_used_mb"], resources["memory_total_mb"]
+            memory_text = f"{used} / {total} MB" if used is not None and total is not None else "Unavailable"
+            stdscr.addnstr(13, 0, f"CPU: {cpu_text}", max(1, width - 1))
+            stdscr.addnstr(14, 0, f"Memory: {memory_text}", max(1, width - 1))
+            stdscr.addnstr(
+                max(0, height - 1), 0,
+                "Leave this window open · Press q to stop the stream",
+                max(1, width - 1), curses.A_DIM,
+            )
+            stdscr.refresh()
+            key = stdscr.getch()
+            if key in (ord("q"), ord("Q"), 27):
+                return 0
+    finally:
+        session.stop()
 
 
 def _terminal_main(stdscr, config: dict | None) -> int:
     curses.curs_set(0)
-    if config is None:
-        saved_config = _read_saved_config()
-        if saved_config is not None and _stream_is_active():
-            return _monitor_stream(saved_config, stdscr)
-        config = guided_configuration(stdscr)
-    return run_stream(config, stdscr)
+    selected = config if config is not None else guided_configuration(stdscr)
+    return run_stream(selected, stdscr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -650,12 +381,9 @@ def main(argv: list[str] | None = None) -> int:
         "-c", metavar="SOURCE;RESOLUTION;FPS", dest="shortcut",
         help="skip the guided setup (for example: -c \"USB;1920x1080;30\")",
     )
-    parser.add_argument("--service", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
     try:
-        if args.service:
-            return run_service()
         config = resolve_shortcut(args.shortcut) if args.shortcut else None
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise RuntimeError("The PetCam configuration and status interface requires an interactive SSH terminal.")
