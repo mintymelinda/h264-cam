@@ -370,13 +370,16 @@ def run_server(camera_status: dict) -> int:
 
     def read_audio_capture() -> None:
         assert audio_capture is not None and audio_capture.stdout is not None
+        pending = bytearray()
         try:
             while not stop_reader.is_set():
-                pcm = audio_capture.stdout.read(320)
-                if not pcm:
+                chunk = audio_capture.stdout.read(320 - len(pending))
+                if not chunk:
                     break
-                if len(pcm) == 320:
-                    server.push_audio_pcm(pcm)
+                pending.extend(chunk)
+                if len(pending) == 320:
+                    server.push_audio_pcm(bytes(pending))
+                    pending.clear()
         except (OSError, Live555Error):
             if not stop_reader.is_set():
                 logging.exception("Microphone audio capture failed")
