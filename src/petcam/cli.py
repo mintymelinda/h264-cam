@@ -286,7 +286,7 @@ def configure_audio(stdscr) -> dict:
     if index is None:
         raise KeyboardInterrupt
     packet_ms = durations[index]
-    gain_options = [75, 100, 50, 25]
+    gain_options = [75, 100, 50, 25, 0]
     index = select_menu(stdscr, "Step 10 · Microphone capture gain",
         "Sets the ALSA microphone capture level. Start at 75%; reduce it if audio clips.",
         [str(gain) + "%" for gain in gain_options])
