@@ -86,13 +86,13 @@ class AudioCaptureModeDisplayTests(unittest.TestCase):
 class L16FramingDisplayTests(unittest.TestCase):
     def test_reports_pcm_samples_and_48khz_rtp_ticks_for_non_48khz_capture(self):
         self.assertEqual(
-            _pcm_framing_label({"sample_rate": 24000, "packet_ms": 5}),
+            _audio_framing_label({"sample_rate": 24000, "output_codec": "L16", "packet_ms": 5}),
             "L16 packetization: 5 ms · 120 PCM samples/ch · 120 RTP ticks",
         )
 
     def test_reports_short_packet_duration(self):
         self.assertEqual(
-            _pcm_framing_label({"sample_rate": 48000, "packet_ms": 5}),
+            _pcm_framing_label({"sample_rate": 48000, "output_codec": "L16", "packet_ms": 5}),
             "L16 packetization: 5 ms · 240 PCM samples/ch · 240 RTP ticks",
         )
 
