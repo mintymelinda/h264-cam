@@ -215,8 +215,36 @@ def wait_for_enter(stdscr, title: str, message: str) -> None:
         pass
 
 
+def discover_audio_capabilities() -> dict:
+    """Query ALSA hardware constraints and retain modes accepted by Opus."""
+    fallback = {"sample_rates": [48000], "channels": [1, 2]}
+    if not shutil.which("arecord"):
+        return fallback
+    try:
+        listing = subprocess.run(["arecord", "-l"], capture_output=True, text=True, timeout=5)
+        device_match = next((line for line in listing.stdout.splitlines() if "card " in line and ", device " in line), "")
+        if listing.returncode != 0 or not device_match:
+            return fallback
+        card_part = device_match.split("card ", 1)[1].split(":", 1)[0]
+        device_part = device_match.split(", device ", 1)[1].split(":", 1)[0]
+        device = "hw:" + card_part + "," + device_part
+        result = subprocess.run(["arecord", "--dump-hw-params", "-D", device, "-d", "1", "-t", "raw", "/dev/null"], capture_output=True, text=True, timeout=5)
+        lines = (result.stdout + " " + result.stderr).splitlines()
+        def limits(prefix):
+            line = next((item for item in lines if item.strip().startswith(prefix)), "")
+            values = [int(token) for token in line.replace("[", " ").replace("]", " ").split() if token.isdigit()]
+            return (min(values), max(values)) if len(values) >= 2 else None
+        rate_limits = limits("RATE:")
+        channel_limits = limits("CHANNELS:")
+        rates = [rate for rate in (8000, 12000, 16000, 24000, 48000) if rate_limits and rate_limits[0] <= rate <= rate_limits[1]]
+        channels = [count for count in (1, 2) if channel_limits and channel_limits[0] <= count <= channel_limits[1]]
+        return {"sample_rates": rates or fallback["sample_rates"], "channels": channels or fallback["channels"]}
+    except (OSError, subprocess.TimeoutExpired):
+        return fallback
+
 def configure_audio(stdscr) -> dict:
-    rates = [8000, 12000, 16000, 24000, 48000]
+    capabilities = discover_audio_capabilities()
+    rates = capabilities["sample_rates"]
     index = select_menu(stdscr, "Step 4 · Audio sample rate",
         "Choose an Opus-compatible ALSA capture rate.",
         [str(rate // 1000) + " kHz" for rate in rates])
@@ -225,10 +253,10 @@ def configure_audio(stdscr) -> dict:
     sample_rate = rates[index]
     index = select_menu(stdscr, "Step 5 · Audio channels",
         "The Opus track supports mono or stereo.",
-        ["Mono", "Stereo"])
+        ["Mono" if count == 1 else "Stereo" for count in capabilities["channels"]])
     if index is None:
         raise KeyboardInterrupt
-    channels = index + 1
+    channels = capabilities["channels"][index]
     index = select_menu(stdscr, "Step 6 · Input codec",
         "The capture path accepts signed 16-bit PCM; ALSA plug performs hardware conversion.",
         ["S16_LE PCM"])
