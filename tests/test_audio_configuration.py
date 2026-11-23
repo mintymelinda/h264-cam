@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from petcam.cli import configure_audio
 from petcam.configuration import ConfigurationError, validate_config
 from petcam.infrastructure.streaming.live555 import PcmAudioFramer, build_audio_capture_command
 
@@ -34,6 +35,10 @@ class AudioConfigurationTests(unittest.TestCase):
                 self.assertEqual(normalized["audio"]["capture_gain_percent"], 75)
                 self.assertEqual(normalized["audio"]["device"], "plughw:1,0")
 
+    def test_zero_capture_gain_is_valid(self) -> None:
+        normalized = validate_config(self.base_config({"capture_gain_percent": 0}))
+        self.assertEqual(normalized["audio"]["capture_gain_percent"], 0)
+
     def test_rejects_non_opus_packet_duration(self) -> None:
         with self.assertRaises(ConfigurationError):
             validate_config(self.base_config({"packet_ms": 15}))
@@ -46,6 +51,25 @@ class AudioConfigurationTests(unittest.TestCase):
         for gain in (-1, 101):
             with self.subTest(gain=gain), self.assertRaises(ConfigurationError):
                 validate_config(self.base_config({"capture_gain_percent": gain}))
+
+    def test_interactive_audio_setup_offers_zero_capture_gain(self) -> None:
+        menu_calls = []
+
+        def choose(_stdscr, title, _subtitle, items):
+            menu_calls.append((title, items))
+            return 0
+
+        with (
+            patch("petcam.cli.discover_audio_capabilities", return_value={
+                "sample_rates": [48000], "channels": [2], "device": "plughw:1,0",
+            }),
+            patch("petcam.cli.select_menu", side_effect=choose),
+        ):
+            audio = configure_audio(object())
+
+        gain_menu = next(items for title, items in menu_calls if "capture gain" in title.lower())
+        self.assertIn("0%", gain_menu)
+        self.assertEqual(audio["capture_gain_percent"], 75)
 
     def test_pcm_framer_uses_selected_rate_channels_and_packet_duration(self) -> None:
         framer = PcmAudioFramer(sample_rate=48000, channels=1, packet_ms=2.5)
