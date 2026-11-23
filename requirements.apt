@@ -1,4 +1,4 @@
-# Debian packages required by the PetCam native H.264 runtime.
+# Debian packages required by the PetCam runtime and native Live555 build.
 python3
 v4l-utils
 alsa-utils
@@ -7,5 +7,4 @@ rpicam-apps-lite
 liblivemedia116
 liblivemedia-dev
 g++
-libssl-dev
 avahi-daemon
