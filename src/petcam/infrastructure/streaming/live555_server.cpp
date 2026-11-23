@@ -1,5 +1,4 @@
 #include <liveMedia.hh>
-#include <opus/opus.h>
 #include <H264VideoStreamDiscreteFramer.hh>
 #include <SimpleRTPSink.hh>
 #include <BasicUsageEnvironment.hh>
@@ -55,10 +54,7 @@ int kAudioSampleRate = 48000;
 int kAudioChannels = 2;
 int kAudioFrameSamples = 960;
 std::size_t kAudioFrameBytes = 3840;
-int kAudioBitrate = 128000;
 int kAudioPacketMs10 = 200;
-constexpr int kAudioComplexity = 5;
-OpusEncoder* audioEncoder = nullptr;
 std::uint64_t sequence = 1;
 std::thread worker;
 TaskScheduler* scheduler = nullptr;
@@ -363,13 +359,14 @@ public:
 protected:
   explicit AudioSubsession(UsageEnvironment& env) : OnDemandServerMediaSubsession(env, False) {}
   FramedSource* createNewStreamSource(unsigned clientSessionId, unsigned& bitrate) override {
-    bitrate = kAudioBitrate / 1000;
+    bitrate = (kAudioSampleRate * kAudioChannels * 16) / 1000;
     return AudioSource::createNew(envir(), mediaSessionStart(clientSessionId));
   }
   RTPSink* createNewRTPSink(Groupsock* groupsock, unsigned char payload, FramedSource*) override {
-    // Use Live555's allocated dynamic payload type; Opus always uses a 48 kHz RTP clock.
+    // RFC 3551 L16 uses network-byte-order signed 16-bit samples and the
+    // configured sample rate as its RTP clock.
     return SimpleRTPSink::createNew(envir(), groupsock, payload,
-      48000, "audio", "OPUS", kAudioChannels, False, False);
+      kAudioSampleRate, "audio", "L16", kAudioChannels, False, False);
   }
 private:
   ~AudioSubsession() override = default;
@@ -456,20 +453,17 @@ void serve(unsigned short port, std::string path) {
 }
 
 extern "C" {
-int petcam_configure_audio(int sampleRate, int channels, int bitrate, int packetMs10) {
+int petcam_configure_audio(int sampleRate, int channels, int packetMs10) {
   if (worker.joinable()) return -1;
   if ((sampleRate != 8000 && sampleRate != 12000 && sampleRate != 16000 &&
        sampleRate != 24000 && sampleRate != 48000) ||
-      (channels != 1 && channels != 2) || bitrate < 6000 || bitrate > 510000 ||
-      (packetMs10 != 25 && packetMs10 != 50 && packetMs10 != 100 &&
-       packetMs10 != 200 && packetMs10 != 400 && packetMs10 != 600)) return -1;
+      (channels != 1 && channels != 2) || packetMs10 != 50) return -1;
   const int samples = sampleRate * packetMs10 / 10000;
   if (samples <= 0 || sampleRate * packetMs10 % 10000 != 0) return -1;
   kAudioSampleRate = sampleRate;
   kAudioChannels = channels;
   kAudioFrameSamples = samples;
   kAudioFrameBytes = static_cast<std::size_t>(samples * channels * 2);
-  kAudioBitrate = bitrate;
   kAudioPacketMs10 = packetMs10;
   return 0;
 }
@@ -481,27 +475,7 @@ int petcam_start(unsigned short port, const char* path) {
     std::lock_guard<std::mutex> audioLock(audioQueueMutex);
     audioQueue.clear();
     audioSequence = 1;
-    if (audioEncoder != nullptr) {
-      opus_encoder_destroy(audioEncoder);
-      audioEncoder = nullptr;
-    }
-    int opusError = OPUS_OK;
-    audioEncoder = opus_encoder_create(
-      kAudioSampleRate, kAudioChannels, OPUS_APPLICATION_AUDIO, &opusError
-    );
-    if (audioEncoder == nullptr || opusError != OPUS_OK) {
-      startupMessage = std::string("Unable to create the Opus encoder: ") +
-        opus_strerror(opusError);
-      return -1;
-    }
-    if (opus_encoder_ctl(audioEncoder, OPUS_SET_BITRATE(kAudioBitrate)) != OPUS_OK ||
-        opus_encoder_ctl(audioEncoder, OPUS_SET_COMPLEXITY(kAudioComplexity)) != OPUS_OK ||
-        opus_encoder_ctl(audioEncoder, OPUS_SET_FORCE_CHANNELS(kAudioChannels)) != OPUS_OK) {
-      startupMessage = "Unable to configure the Opus encoder.";
-      opus_encoder_destroy(audioEncoder);
-      audioEncoder = nullptr;
-      return -1;
-    }
+    audioQueue.clear();
   }
   deliveredNals.store(0, std::memory_order_relaxed);
   for (auto& count : deliveredNalsByType) count.store(0, std::memory_order_relaxed);
@@ -520,28 +494,14 @@ int petcam_start(unsigned short port, const char* path) {
 int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
   if (!data || size != kAudioFrameBytes) return -1;
   const auto capturedAt = std::chrono::steady_clock::now();
-  std::vector<opus_int16> pcm(static_cast<std::size_t>(kAudioFrameSamples * kAudioChannels));
-  for (std::size_t i = 0; i < pcm.size(); ++i) {
-    const std::size_t offset = i * 2;
-    const auto raw = static_cast<unsigned>(
-      static_cast<unsigned>(data[offset]) |
-      (static_cast<unsigned>(data[offset + 1]) << 8)
-    );
-    const int signedSample = raw <= 32767U
-      ? static_cast<int>(raw)
-      : static_cast<int>(raw) - 65536;
-    pcm[i] = static_cast<opus_int16>(signedSample);
+  // ALSA supplies S16_LE; RTP L16 requires big-endian network byte order.
+  std::vector<unsigned char> packet(size);
+  for (std::size_t i = 0; i < size; i += 2) {
+    packet[i] = data[i + 1];
+    packet[i + 1] = data[i];
   }
 
   std::lock_guard<std::mutex> lock(audioQueueMutex);
-  if (audioEncoder == nullptr) return -1;
-  std::array<unsigned char, 4000> encoded{};
-  const int encodedSize = opus_encode(
-    audioEncoder, pcm.data(), kAudioFrameSamples,
-    encoded.data(), static_cast<opus_int32>(encoded.size())
-  );
-  if (encodedSize <= 0) return -1;
-  std::vector<unsigned char> packet(encoded.begin(), encoded.begin() + encodedSize);
   audioQueue.push_back(AudioFrame{audioSequence++, std::move(packet), capturedAt});
   const auto maxFrames = static_cast<std::size_t>(20000 / kAudioPacketMs10);
   while (audioQueue.size() > maxFrames) audioQueue.pop_front();
@@ -606,10 +566,6 @@ void petcam_stop() {
   {
     std::lock_guard<std::mutex> audioLock(audioQueueMutex);
     audioQueue.clear();
-    if (audioEncoder != nullptr) {
-      opus_encoder_destroy(audioEncoder);
-      audioEncoder = nullptr;
-    }
   }
   sequence = 1;
 }
