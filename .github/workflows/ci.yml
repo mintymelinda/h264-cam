@@ -51,6 +51,14 @@ jobs:
             -o "$RUNNER_TEMP/test_live555_nal_chunks"
           "$RUNNER_TEMP/test_live555_nal_chunks"
 
+      - name: Test PCMU microphone audio encoding
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Isrc/petcam/infrastructure/streaming \
+            tests/test_live555_pcmu.cpp \
+            -o "$RUNNER_TEMP/test_live555_pcmu"
+          "$RUNNER_TEMP/test_live555_pcmu"
+
       - name: Build the Live555 shared library
         run: |
           g++ -std=c++17 -O2 -fPIC -shared \
