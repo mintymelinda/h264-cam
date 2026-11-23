@@ -202,8 +202,14 @@ def _detect_alsa_capture_device() -> str:
     return f"plughw:{selected[0]},{selected[1]}"
 
 
-def set_alsa_capture_volume(device: str) -> None:
-    """Set the selected ALSA card's microphone capture volume to 100%."""
+def set_alsa_capture_volume(device: str, gain_percent: int = 100) -> None:
+    """Set the selected ALSA card's microphone capture volume."""
+    try:
+        gain_percent = int(gain_percent)
+    except (TypeError, ValueError) as error:
+        raise Live555Error("Microphone capture gain must be an integer from 0 to 100 percent.") from error
+    if not 0 <= gain_percent <= 100:
+        raise Live555Error("Microphone capture gain must be between 0 and 100 percent.")
     match = re.fullmatch(r"(?:plug)?hw:(\d+),\d+", device)
     if match is None:
         raise Live555Error(
@@ -213,7 +219,7 @@ def set_alsa_capture_volume(device: str) -> None:
     amixer = shutil.which("amixer")
     if not amixer:
         raise Live555Error("amixer is missing; install alsa-utils to set microphone volume.")
-    command = [amixer, "-c", match.group(1), "sset", "Mic", "100%", "cap"]
+    command = [amixer, "-c", match.group(1), "sset", "Mic", f"{gain_percent}%", "cap"]
     try:
         result = subprocess.run(
             command, check=False, capture_output=True, text=True, timeout=5
@@ -223,7 +229,7 @@ def set_alsa_capture_volume(device: str) -> None:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise Live555Error(
-            "Unable to set ALSA microphone capture volume to 100%."
+            f"Unable to set ALSA microphone capture volume to {gain_percent}%."
             + (f" {detail}" if detail else "")
         )
 
@@ -514,8 +520,13 @@ def run_server(camera_status: dict) -> int:
         audio_command = build_audio_capture_command(camera_status)
         if audio_command is not None:
             audio_device = audio_command[audio_command.index("--device") + 1]
-            set_alsa_capture_volume(audio_device)
-            logging.info("Set ALSA microphone capture volume to 100%% on %s", audio_device)
+            capture_gain_percent = int(audio.get("capture_gain_percent", 100))
+            set_alsa_capture_volume(audio_device, capture_gain_percent)
+            logging.info(
+                "Set ALSA microphone capture volume to %s%% on %s",
+                capture_gain_percent,
+                audio_device,
+            )
             try:
                 audio_capture = subprocess.Popen(
                     audio_command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
