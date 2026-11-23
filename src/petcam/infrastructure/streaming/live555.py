@@ -201,6 +201,32 @@ def _detect_alsa_capture_device() -> str:
     return f"plughw:{selected[0]},{selected[1]}"
 
 
+def set_alsa_capture_volume(device: str) -> None:
+    """Set the selected ALSA card's microphone capture volume to 100%."""
+    match = re.fullmatch(r"(?:plug)?hw:(\\d+),\\d+", device)
+    if match is None:
+        raise Live555Error(
+            "Cannot set microphone volume for ALSA device "
+            f"{device!r}; use a numeric hw:CARD,DEVICE or plughw:CARD,DEVICE name."
+        )
+    amixer = shutil.which("amixer")
+    if not amixer:
+        raise Live555Error("amixer is missing; install alsa-utils to set microphone volume.")
+    command = [amixer, "-c", match.group(1), "sset", "Mic", "100%", "cap"]
+    try:
+        result = subprocess.run(
+            command, check=False, capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise Live555Error(f"Unable to set microphone capture volume: {error}") from error
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise Live555Error(
+            "Unable to set ALSA microphone capture volume to 100%."
+            + (f" {detail}" if detail else "")
+        )
+
+
 def build_audio_capture_command() -> list[str] | None:
     """Capture stereo 48 kHz signed PCM for the Live555 Opus audio track."""
     if os.environ.get("PETCAM_AUDIO", "1").strip().lower() in {"0", "false", "no", "off"}:
@@ -465,6 +491,9 @@ def run_server(camera_status: dict) -> int:
         server.clear_audio()
         audio_command = build_audio_capture_command()
         if audio_command is not None:
+            audio_device = audio_command[audio_command.index("--device") + 1]
+            set_alsa_capture_volume(audio_device)
+            logging.info("Set ALSA microphone capture volume to 100%% on %s", audio_device)
             try:
                 audio_capture = subprocess.Popen(
                     audio_command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
