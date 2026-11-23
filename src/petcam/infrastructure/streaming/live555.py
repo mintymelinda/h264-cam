@@ -300,7 +300,7 @@ class Live555Server:
         self.library.petcam_nal_type_count.restype = ctypes.c_ulonglong
 
     def configure_audio(self, audio: dict) -> None:
-        packet_ms10 = round(float(audio.get("packet_ms", 20)) * 10)
+        packet_ms10 = round(float(audio.get("packet_ms", 5)) * 10)
         result = self.library.petcam_configure_audio(
             int(audio.get("sample_rate", 48000)),
             int(audio.get("channels", 2)),
