@@ -73,6 +73,7 @@ def validate_config(value: dict[str, Any]) -> dict[str, Any]:
         "output_codec": str(audio.get("output_codec", "OPUS")).upper(),
         "bitrate": bitrate,
         "packet_ms": packet_ms,
+        "device": str(audio.get("device", "auto")),
     }
     if normalized["audio"]["input_format"] != "S16_LE":
         raise ConfigurationError("Only S16_LE PCM input is currently supported.")
