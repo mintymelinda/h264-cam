@@ -63,10 +63,8 @@ def _v4l2_controls() -> list[tuple[str, int]]:
 
 
 def build_capture_command(status: dict) -> list[str]:
-    if status.get("native_h264") is not True:
-        raise CaptureError("PetCam accepts only native H.264 camera sources.")
     width, height, fps = validate_mode(status)
-    if status.get("backend") == "usb":
+    if status.get("source") == "USB":
         device = str(status.get("device", ""))
         if not (device.startswith("/dev/video") or device.startswith("/dev/v4l/by-id/")):
             raise CaptureError("Configured USB camera device path is invalid.")
@@ -86,7 +84,7 @@ def build_capture_command(status: dict) -> list[str]:
             command.append("--stream-poll")
         command.append("--stream-to=-")
         return command
-    if status.get("backend") == "csi":
+    if status.get("source") == "CSI":
         try:
             camera = int(status.get("camera"))
         except (TypeError, ValueError) as error:
@@ -106,5 +104,5 @@ def build_capture_command(status: dict) -> list[str]:
             "--width", str(width), "--height", str(height),
             "--framerate", f"{fps:g}", "--output", "-",
         ]
-    raise CaptureError("Configured camera backend must be usb or csi.")
+    raise CaptureError("Configured camera source must be USB or CSI.")
 
