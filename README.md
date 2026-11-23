@@ -22,10 +22,13 @@ On a supported Raspberry Pi OS installation:
 sudo ./install.sh
 ```
 
-The installer uses the Live555 packages provided by Raspberry Pi OS and compiles the native
-RTSP/RTP server against the system libraries. The compiler and development packages remain
-installed; the installer deliberately does not run package autoremove. No GStreamer or PyPI
-dependencies are required.
+The installer reads the Debian package list from `requirements.apt`. It installs the
+Python standard library runtime, camera and audio utilities, Live555 and Opus development
+libraries, and the native compiler needed to build PetCam's Live555 server. There are no
+third-party Python packages to install: the application uses the Python standard library
+and its RTSP/RTP implementation is the native Live555 library. The compiler and
+development packages remain installed; the installer deliberately does not run package
+autoremove.
 
 Run the guided terminal workflow:
 
@@ -111,12 +114,13 @@ To inspect ALSA capture devices manually, run `arecord -l`. Automatic selection 
 the Razer Kiyo when it is listed, then falls back to the first available capture device.
 To force a specific ALSA device, set `PETCAM_AUDIO_DEVICE=plughw:1,0` (replace the card
 and device numbers with those shown by `arecord -l`). At startup, PetCam sets the selected
-card's ALSA `Mic` capture volume to 100% and enables capture. This requires the `amixer`
-utility and a numeric `hw:CARD,DEVICE` or `plughw:CARD,DEVICE` device name. Capture requests
-native-format stereo S16_LE at 48 kHz in 20 ms frames. The Razer Kiyo advertises this exact
-format, so its capture path does not need ALSA rate or channel conversion. Opus encodes the frames
-as 20 ms stereo RTP packets at 128 kbit/s with encoder complexity 5. The RTP clock is 48 kHz; Live555 assigns the dynamic RTP payload type.
-Set `PETCAM_AUDIO=0` only when video-only output is required. Use
+card's ALSA `Mic` capture volume to 100% and enables capture. This requires the
+`amixer` utility and a numeric `hw:CARD,DEVICE` or `plughw:CARD,DEVICE` device name.
+Capture requests native-format stereo S16_LE at 48 kHz in 20 ms frames. The Razer Kiyo
+advertises this exact format, so its capture path does not need ALSA rate or channel conversion.
+Opus encodes the frames as 20 ms stereo RTP packets at 128 kbit/s with encoder complexity 5.
+The RTP clock is 48 kHz; Live555 assigns the dynamic RTP payload type. Set `PETCAM_AUDIO=0`
+only when video-only output is required. Use
 `scripts/check_rtsp_tcp.py --require-audio rtsp://DEVICE-HOSTNAME.local:8554/petcam`
 to verify both video and microphone RTP delivery from the running device.
 
@@ -135,12 +139,11 @@ apply only to `rpicam-vid` cameras. The discrete Live555 framer assumes each sou
 complete NAL unit; its access-unit marker is approximate for streams that split one picture
 across multiple slices, so it is an experiment rather than the default.
 
-USB H.264 is captured
-directly with V4L2; CSI H.264 is captured with `rpicam-vid`. Both paths pass Annex-B
-NAL units to Live555 without decoding or transcoding. Only the IDR NAL (type 5) carries
-the `is_idr` marker. When a client joins or the queue loses data, Live555 uses that IDR
-marker to locate the associated SPS/PPS entries immediately before it and resumes from
-that complete recovery sequence.
+USB H.264 is captured directly with V4L2; CSI H.264 is captured with `rpicam-vid`. Both
+paths pass Annex-B NAL units to Live555 without decoding or transcoding. Only the IDR NAL
+(type 5) carries the `is_idr` marker. When a client joins or the queue loses data, Live555
+uses that IDR marker to locate the associated SPS/PPS entries immediately before it and
+resumes from that complete recovery sequence.
 
 ## Build an image locally
 
