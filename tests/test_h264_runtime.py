@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from petcam.cli import camera_modes, inventory_signature, parse_short_config
+from petcam.cli import _audio_capture_mode_label, camera_modes, inventory_signature, parse_short_config
 from petcam.configuration import ConfigurationError, validate_config
 from petcam.domain.camera.capabilities import parse_csi_cameras, parse_v4l2_modes
 from petcam.infrastructure.camera.h264 import (
@@ -54,6 +54,28 @@ class ShortConfigurationTests(unittest.TestCase):
             "capture_gain_percent": 100,
             "device": "auto",
         })
+
+
+class AudioCaptureModeDisplayTests(unittest.TestCase):
+    def test_formats_mono_capture_mode(self):
+        self.assertEqual(
+            _audio_capture_mode_label({
+                "sample_rate": 48000,
+                "channels": 1,
+                "input_format": "S16_LE",
+            }),
+            "Audio capture mode: 48 kHz · Mono · S16_LE",
+        )
+
+    def test_formats_stereo_capture_mode(self):
+        self.assertEqual(
+            _audio_capture_mode_label({
+                "sample_rate": 24000,
+                "channels": 2,
+                "input_format": "S16_LE",
+            }),
+            "Audio capture mode: 24 kHz · Stereo · S16_LE",
+        )
 
 
 class CameraModeTests(unittest.TestCase):
