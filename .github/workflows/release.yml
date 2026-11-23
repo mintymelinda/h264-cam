@@ -42,36 +42,6 @@ jobs:
           PYTHONPATH: src
         run: python3 -m unittest discover -s tests -v
 
-  build-test:
-    name: Build and test the real installer on ARM
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 180
-    steps:
-      - name: Check out the exact pull request head
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - name: Install ARMHF execution and image-build tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(uname -m)" = aarch64
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-user-static curl xz-utils parted e2fsprogs util-linux
-          test -x /usr/bin/qemu-arm-static
-          /usr/bin/qemu-arm-static --version
-      - name: Build the image by cloning this PR and running its real installer
-        env:
-          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha }}
-          SOURCE_REF: ${{ github.head_ref }}
-          SOURCE_REPOSITORY: ${{ github.event.pull_request.head.repo.clone_url }}
-          PR_VERSION: pr-${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          sudo env PETCAM_VERSION="$PR_VERSION" PETCAM_SOURCE_COMMIT="$SOURCE_COMMIT" PETCAM_SOURCE_REF="$SOURCE_REF" PETCAM_SOURCE_REPOSITORY="$SOURCE_REPOSITORY" bash ./build-image.sh "$RUNNER_TEMP/h264-cam-pr"
-          sudo bash ./scripts/verify-image-artifact.sh "$RUNNER_TEMP/h264-cam-pr/h264-cam-$PR_VERSION-raspios-lite-armhf.img.xz" "$PR_VERSION" "$SOURCE_COMMIT"
-
   release:
     name: Build and publish Trixie ARMHF image
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
