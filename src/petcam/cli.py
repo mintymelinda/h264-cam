@@ -217,7 +217,7 @@ def wait_for_enter(stdscr, title: str, message: str) -> None:
 
 
 def discover_audio_capabilities() -> dict:
-    """Query ALSA hardware constraints and retain modes accepted by Opus."""
+    """Query ALSA hardware constraints and retain supported PCM capture modes."""
     fallback = {"sample_rates": [48000], "channels": [1, 2]}
     if not shutil.which("arecord"):
         return fallback
@@ -418,7 +418,7 @@ def _pcm_framing_label(audio: dict) -> str:
     sample_rate = int(audio.get("sample_rate", 48000))
     packet_ms = float(audio.get("packet_ms", 20))
     pcm_samples = round(sample_rate * packet_ms / 1000)
-    rtp_ticks = round(48000 * packet_ms / 1000)
+    rtp_ticks = round(sample_rate * packet_ms / 1000)
     return (
         f"L16 RTP packetization: {packet_ms:g} ms · "
         f"{pcm_samples} PCM samples/ch · {rtp_ticks} RTP ticks"
