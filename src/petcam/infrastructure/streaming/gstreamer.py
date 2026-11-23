@@ -35,8 +35,9 @@ def _load_gstreamer():
         import gi
 
         gi.require_version("Gst", "1.0")
+        gi.require_version("GstRtsp", "1.0")
         gi.require_version("GstRtspServer", "1.0")
-        from gi.repository import GLib, Gst, GstRtspServer
+        from gi.repository import GLib, Gst, GstRtsp, GstRtspServer
     except (ImportError, ValueError) as error:
         raise GStreamerError(
             "GStreamer RTSP support is missing. Install python3-gi, "
@@ -44,12 +45,12 @@ def _load_gstreamer():
             "minimal GStreamer RTSP/appsrc/RTP/H.264 runtime packages."
         ) from error
     Gst.init(None)
-    return GLib, Gst, GstRtspServer
+    return GLib, Gst, GstRtspServer, GstRtsp
 
 
 def validate_runtime() -> None:
     """Fail early when a required GStreamer element or RTSP binding is absent."""
-    _glib, gst, rtsp_server = _load_gstreamer()
+    _glib, gst, rtsp_server, _rtsp = _load_gstreamer()
     if rtsp_server.RTSPServer is None:
         raise GStreamerError("The GStreamer RTSP server binding is unavailable.")
     missing = [
@@ -72,7 +73,7 @@ class GStreamerRtspServer:
     """An in-process GStreamer RTSP server with one shared live media pipeline."""
 
     def __init__(self, port: int = RTSP_PORT, path: str = RTSP_PATH, on_media_configure=None):
-        self.GLib, self.Gst, self.GstRtspServer = _load_gstreamer()
+        self.GLib, self.Gst, self.GstRtspServer, self.GstRtsp = _load_gstreamer()
         self._media_configured_callback = on_media_configure
         validate_runtime()
         self._lock = threading.RLock()
@@ -91,7 +92,7 @@ class GStreamerRtspServer:
         self.factory.set_shared(True)
         # Carry RTP interleaved over the RTSP TCP connection. This avoids
         # requiring a second, dynamically negotiated UDP port range.
-        self.factory.set_protocols(self.GstRtspServer.RTSPLowerTrans.TCP)
+        self.factory.set_protocols(self.GstRtsp.RTSPLowerTrans.TCP)
         self.factory.set_launch(RTSP_PIPELINE)
         self.factory.connect("media-configure", self._on_media_configure)
         self.server.get_mount_points().add_factory(path, self.factory)
