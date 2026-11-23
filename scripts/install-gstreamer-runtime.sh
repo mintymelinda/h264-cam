@@ -5,7 +5,7 @@ log() { printf '[petcam-gstreamer] %s\n' "$*"; }
 fail() { printf '[petcam-gstreamer] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [[ "$EUID" -eq 0 ]] || fail "Run this helper as root."
-for tool in apt-get dpkg dpkg-deb dpkg-query ldd ldconfig; do
+for tool in apt-get apt-cache dpkg dpkg-deb dpkg-query ldd ldconfig; do
   command -v "$tool" >/dev/null 2>&1 || fail "Required package tool is missing: $tool"
 done
 
@@ -42,14 +42,19 @@ installed_rtp_version="$(dpkg-query -W -f='${Version}' petcam-gstreamer-rtp 2>/d
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
-log "Downloading official Debian GStreamer runtime packages without installing their broad metapackage dependencies."
+codec_library_package="libgstreamer-plugins-bad1.0-0"
+if apt-cache show "libgstreamer-plugins-extra1.0-0:$architecture" >/dev/null 2>&1; then
+  codec_library_package="libgstreamer-plugins-extra1.0-0"
+fi
+
+log "Downloading official GStreamer runtime packages without installing their broad metapackage dependencies."
 (
   cd "$work_dir"
   apt-get download \
     "libgstrtspserver-1.0-0:$architecture" \
     "gir1.2-gst-rtsp-server-1.0:$architecture" \
     "gstreamer1.0-plugins-bad:$architecture" \
-    "libgstreamer-plugins-bad1.0-0:$architecture" \
+    "$codec_library_package:$architecture" \
     "gstreamer1.0-plugins-good:$architecture"
 )
 
@@ -69,7 +74,7 @@ find_deb() {
 rtsp_deb="$(find_deb libgstrtspserver-1.0-0)" || fail "The RTSP server shared-library package was not downloaded."
 typelib_deb="$(find_deb gir1.2-gst-rtsp-server-1.0)" || fail "The RTSP server typelib package was not downloaded."
 plugin_deb="$(find_deb gstreamer1.0-plugins-bad)" || fail "The H.264 parser plugin package was not downloaded."
-codec_deb="$(find_deb libgstreamer-plugins-bad1.0-0)" || fail "The codec-parser library package was not downloaded."
+codec_deb="$(find_deb "$codec_library_package")" || fail "The codec-parser library package was not downloaded."
 rtp_plugin_deb="$(find_deb gstreamer1.0-plugins-good)" || fail "The GStreamer RTP plugin package was not downloaded."
 
 rtsp_version="$(dpkg-deb -f "$rtsp_deb" Version)"
