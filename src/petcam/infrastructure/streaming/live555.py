@@ -203,7 +203,7 @@ def _detect_alsa_capture_device() -> str:
 
 def set_alsa_capture_volume(device: str) -> None:
     """Set the selected ALSA card's microphone capture volume to 100%."""
-    match = re.fullmatch(r"(?:plug)?hw:(\\d+),\\d+", device)
+    match = re.fullmatch(r"(?:plug)?hw:(\d+),\d+", device)
     if match is None:
         raise Live555Error(
             "Cannot set microphone volume for ALSA device "
