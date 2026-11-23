@@ -19,12 +19,13 @@ On a supported Raspberry Pi OS installation:
 sudo ./install.sh
 ```
 
-The installer installs the GStreamer Python introspection runtime and base/good plugins,
-plus small PetCam runtime packages containing the official GStreamer RTSP server library,
-its typelib, and the H.264 parser plugin. Debian's RTSP server package metadata pulls the
-full plugins-bad bundle, so PetCam packages only the RTSP server files it uses with their
-actual shared-library dependencies. It does not install the full unrelated codec/graphics
-bundle and does not compile a separate native RTSP server.
+The installer adds the Python GObject bindings and GStreamer core/base libraries, then
+builds small PetCam runtime packages from the official GStreamer packages. Those packages
+contain the RTSP server library and typelibs, appsrc, RTP payloader and session-manager
+plugins, and the H.264 parser with its codec-parser library. It extracts only the required
+files instead of installing the full base/good/bad plugin bundles or their unrelated
+graphics and codec dependencies. Existing camera packages are not upgraded, and no
+separate native RTSP server is compiled.
 
 Run the guided terminal workflow:
 
