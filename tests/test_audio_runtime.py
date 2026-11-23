@@ -24,8 +24,8 @@ class PcmAudioFramerTests(unittest.TestCase):
         self.assertEqual(len(frames), 1)
         self.assertEqual(frames[0], first + second[:197])
         frames += framer.feed(third)
-        self.assertEqual(len(frames), 1)
-        self.assertEqual(frames[1 - 1], second[197:] + third[:3])
+        self.assertEqual(len(frames), 2)
+        self.assertEqual(frames[1], second[197:] + third)
 
 
 class AudioCaptureCommandTests(unittest.TestCase):
