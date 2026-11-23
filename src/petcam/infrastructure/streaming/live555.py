@@ -143,7 +143,7 @@ def build_capture_command(status: dict) -> list[str]:
 
 
 class PcmAudioFramer:
-    """Turn arbitrary ALSA pipe reads into exact configured Opus PCM frames."""
+    """Turn arbitrary ALSA pipe reads into exact configured L16 PCM frames."""
 
     def __init__(self, sample_rate: int = 48000, channels: int = 2, packet_ms: float = 20) -> None:
         self.frame_bytes = int(sample_rate * packet_ms / 1000) * channels * 2
@@ -274,7 +274,7 @@ class Live555Server:
         except OSError as error:
             raise Live555Error(f"Unable to load Live555 native library: {error}") from error
         self.library.petcam_configure_audio.argtypes = [
-            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int
+            ctypes.c_int, ctypes.c_int, ctypes.c_int
         ]
         self.library.petcam_configure_audio.restype = ctypes.c_int
         self.library.petcam_start.argtypes = [ctypes.c_ushort, ctypes.c_char_p]
@@ -304,11 +304,10 @@ class Live555Server:
         result = self.library.petcam_configure_audio(
             int(audio.get("sample_rate", 48000)),
             int(audio.get("channels", 2)),
-            int(audio.get("bitrate", 128000)),
             packet_ms10,
         )
         if result != 0:
-            raise Live555Error("The native Opus encoder rejected the selected audio configuration.")
+            raise Live555Error("The native L16 audio path rejected the selected audio configuration.")
 
     def push_audio_pcm(self, pcm: bytes) -> None:
         buffer = (ctypes.c_ubyte * len(pcm)).from_buffer_copy(pcm)
