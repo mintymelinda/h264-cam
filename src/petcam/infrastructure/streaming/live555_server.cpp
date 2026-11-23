@@ -14,6 +14,8 @@
 #include <chrono>
 #include <deque>
 #include <mutex>
+#include <map>
+#include <memory>
 #include <string>
 #include <thread>
 #include <utility>
@@ -35,6 +37,11 @@ struct Nal {
 std::mutex queueMutex, lifecycleMutex;
 std::deque<Nal> queue;
 std::size_t queueBytes = 0;
+struct MediaSessionStart {
+  std::chrono::steady_clock::time_point captureTime;
+};
+std::mutex sessionStartMutex;
+std::map<unsigned, std::weak_ptr<MediaSessionStart>> sessionStarts;
 std::mutex audioQueueMutex;
 struct AudioFrame {
   std::uint64_t seq;
@@ -94,6 +101,36 @@ NalIterator findRecoveryStartAtOrAfter(std::uint64_t minSequence) {
   return queue.end();
 }
 
+std::shared_ptr<MediaSessionStart> mediaSessionStart(unsigned clientSessionId) {
+  std::lock_guard<std::mutex> sessionLock(sessionStartMutex);
+  auto& weakStart = sessionStarts[clientSessionId];
+  if (auto existing = weakStart.lock()) return existing;
+
+  auto start = std::make_shared<MediaSessionStart>();
+  {
+    std::lock_guard<std::mutex> queueLock(queueMutex);
+    const auto recovery = findLatestRecoveryStart();
+    start->captureTime = recovery == queue.end()
+      ? std::chrono::steady_clock::now()
+      : (recovery + 2)->enqueuedAt;
+  }
+  for (auto it = sessionStarts.begin(); it != sessionStarts.end();) {
+    if (it->second.expired() && it->first != clientSessionId) it = sessionStarts.erase(it);
+    else ++it;
+  }
+  weakStart = start;
+  return start;
+}
+
+NalIterator findRecoveryStartAtOrAfterTime(
+    std::chrono::steady_clock::time_point captureTime) {
+  for (auto idr = queue.begin(); idr != queue.end(); ++idr) {
+    if (isCompleteRecoverySequence(idr) && idr->enqueuedAt >= captureTime)
+      return idr - 2;
+  }
+  return queue.end();
+}
+
 bool useDiscreteFramer() {
   const char* value = std::getenv("PETCAM_LIVE555_FRAMER");
   return value != nullptr && std::strcmp(value, "discrete") == 0;
@@ -101,12 +138,15 @@ bool useDiscreteFramer() {
 
 class NalSource final : public FramedSource {
 public:
-  static NalSource* createNew(UsageEnvironment& env, bool includeStartCode) {
-    return new NalSource(env, includeStartCode);
+  static NalSource* createNew(UsageEnvironment& env, bool includeStartCode,
+                              std::shared_ptr<MediaSessionStart> sessionStart) {
+    return new NalSource(env, includeStartCode, std::move(sessionStart));
   }
 protected:
-  explicit NalSource(UsageEnvironment& env, bool includeStartCode)
-    : FramedSource(env), includeStartCode_(includeStartCode) {}
+  explicit NalSource(UsageEnvironment& env, bool includeStartCode,
+                     std::shared_ptr<MediaSessionStart> sessionStart)
+    : FramedSource(env), includeStartCode_(includeStartCode),
+      sessionStart_(std::move(sessionStart)) {}
   void doGetNextFrame() override {
     // Never call afterGetting() re-entrantly from RTSP PLAY/SETUP handling.
     // The RTSP response must be written before interleaved RTP/RTCP media.
@@ -175,7 +215,7 @@ private:
     if (queue.empty()) return;
 
     if (!cursorSet_) {
-      auto recovery = findLatestRecoveryStart();
+      auto recovery = findRecoveryStartAtOrAfterTime(sessionStart_->captureTime);
       if (recovery != queue.end()) {
         cursor_ = recovery->seq;
         cursorSet_ = true;
@@ -206,6 +246,7 @@ private:
   std::uint64_t cursor_ = 0;
   bool cursorSet_ = false;
   bool includeStartCode_;
+  std::shared_ptr<MediaSessionStart> sessionStart_;
   std::chrono::steady_clock::time_point currentPresentationTime_{};
   std::vector<unsigned char> currentNal_;
   std::size_t currentNalOffset_ = 0;
@@ -214,9 +255,14 @@ private:
 
 class AudioSource final : public FramedSource {
 public:
-  static AudioSource* createNew(UsageEnvironment& env) { return new AudioSource(env); }
+  static AudioSource* createNew(UsageEnvironment& env,
+                                std::shared_ptr<MediaSessionStart> sessionStart) {
+    return new AudioSource(env, std::move(sessionStart));
+  }
 protected:
-  explicit AudioSource(UsageEnvironment& env) : FramedSource(env) {}
+  explicit AudioSource(UsageEnvironment& env,
+                       std::shared_ptr<MediaSessionStart> sessionStart)
+    : FramedSource(env), sessionStart_(std::move(sessionStart)) {}
   void doGetNextFrame() override {
     nextTask() = envir().taskScheduler().scheduleDelayedTask(0, deliverTask, this);
   }
@@ -245,7 +291,15 @@ private:
       std::lock_guard<std::mutex> lock(audioQueueMutex);
       if (!audioQueue.empty()) {
         if (!cursorSet_) {
-          cursor_ = audioQueue.back().seq;
+          auto start = std::find_if(audioQueue.begin(), audioQueue.end(),
+            [this](const AudioFrame& item) {
+              return item.capturedAt >= sessionStart_->captureTime;
+            });
+          if (start == audioQueue.end()) {
+            nextTask() = envir().taskScheduler().scheduleDelayedTask(5000, retry, this);
+            return;
+          }
+          cursor_ = start->seq;
           cursorSet_ = true;
         }
         auto it = std::find_if(audioQueue.begin(), audioQueue.end(),
@@ -274,15 +328,16 @@ private:
   }
   std::uint64_t cursor_ = 0;
   bool cursorSet_ = false;
+  std::shared_ptr<MediaSessionStart> sessionStart_;
 };
 class AudioSubsession final : public OnDemandServerMediaSubsession {
 public:
   static AudioSubsession* createNew(UsageEnvironment& env) { return new AudioSubsession(env); }
 protected:
   explicit AudioSubsession(UsageEnvironment& env) : OnDemandServerMediaSubsession(env, False) {}
-  FramedSource* createNewStreamSource(unsigned, unsigned& bitrate) override {
+  FramedSource* createNewStreamSource(unsigned clientSessionId, unsigned& bitrate) override {
     bitrate = kAudioBitrate / 1000;
-    return AudioSource::createNew(envir());
+    return AudioSource::createNew(envir(), mediaSessionStart(clientSessionId));
   }
   RTPSink* createNewRTPSink(Groupsock* groupsock, unsigned char payload, FramedSource*) override {
     // Use Live555's allocated dynamic payload type; Opus always uses a 48 kHz RTP clock.
@@ -298,12 +353,13 @@ public:
   static H264Subsession* createNew(UsageEnvironment& env) { return new H264Subsession(env); }
 protected:
   explicit H264Subsession(UsageEnvironment& env) : OnDemandServerMediaSubsession(env, False) {}
-  FramedSource* createNewStreamSource(unsigned, unsigned& bitrate) override {
+  FramedSource* createNewStreamSource(unsigned clientSessionId, unsigned& bitrate) override {
     bitrate = 8000;
     const auto clients = connectedClients.fetch_add(1, std::memory_order_relaxed) + 1;
     envir() << "PetCam: H.264 media source opened; active sources=" << clients << "\n";
     const bool discrete = useDiscreteFramer();
-    FramedSource* source = NalSource::createNew(envir(), !discrete);
+    FramedSource* source = NalSource::createNew(
+      envir(), !discrete, mediaSessionStart(clientSessionId));
     if (discrete) {
       // Keep to the three-argument API available in the Raspberry Pi OS
       // Trixie Live555 package; the fourth delimiter option is newer upstream.
