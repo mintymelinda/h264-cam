@@ -413,6 +413,27 @@ def guided_configuration(stdscr) -> dict:
             break
 
 
+def _audio_capture_mode_label(audio: dict) -> str:
+    """Format the configured ALSA input mode for the live status display."""
+    sample_rate = int(audio.get("sample_rate", 48000))
+    channels = int(audio.get("channels", 2))
+    channel_label = {1: "Mono", 2: "Stereo"}.get(channels, f"{channels} ch")
+    input_format = str(audio.get("input_format", "S16_LE"))
+    return f"Audio capture mode: {sample_rate // 1000} kHz · {channel_label} · {input_format}"
+
+
+def _opus_framing_label(audio: dict) -> str:
+    """Show PCM frame size and the corresponding Opus RTP-clock duration."""
+    sample_rate = int(audio.get("sample_rate", 48000))
+    packet_ms = float(audio.get("packet_ms", 20))
+    pcm_samples = round(sample_rate * packet_ms / 1000)
+    rtp_ticks = round(48000 * packet_ms / 1000)
+    return (
+        f"Opus packetization: {packet_ms:g} ms · "
+        f"{pcm_samples} PCM samples/ch · {rtp_ticks} RTP ticks"
+    )
+
+
 def _read_log(path: Path = STREAM_LOG) -> list[str]:
     try:
         return path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -603,14 +624,17 @@ def run_stream(config: dict, stdscr) -> int:
             stdscr.addnstr(8, 0, f"Camera input: {capture_text}", max(1, width - 1))
             stdscr.addnstr(9, 0, f"Server queue: {queue_text}", max(1, width - 1))
             stdscr.addnstr(10, 0, f"RTSP source: {output_text}", max(1, width - 1))
-            stdscr.addnstr(11, 0, f"Capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264", max(1, width - 1))
-            stdscr.addnstr(13, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
+            stdscr.addnstr(11, 0, f"Camera capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264", max(1, width - 1))
+            audio_config = config.get("audio", {})
+            stdscr.addnstr(12, 0, _audio_capture_mode_label(audio_config), max(1, width - 1))
+            stdscr.addnstr(13, 0, _opus_framing_label(audio_config), max(1, width - 1))
+            stdscr.addnstr(15, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
             cpu = resources["cpu_percent"]
             cpu_text = f"{cpu:.1f}%" if isinstance(cpu, (int, float)) else "Sampling…"
             used, total = resources["memory_used_mb"], resources["memory_total_mb"]
             memory_text = f"{used} / {total} MB" if used is not None and total is not None else "Unavailable"
-            stdscr.addnstr(14, 0, f"CPU: {cpu_text}", max(1, width - 1))
-            stdscr.addnstr(15, 0, f"Memory: {memory_text}", max(1, width - 1))
+            stdscr.addnstr(16, 0, f"CPU: {cpu_text}", max(1, width - 1))
+            stdscr.addnstr(17, 0, f"Memory: {memory_text}", max(1, width - 1))
             stdscr.addnstr(max(0, height - 1), 0, "l: view live log · q: stop RTSP stream", max(1, width - 1), curses.A_DIM)
             stdscr.refresh()
             key = stdscr.getch()
