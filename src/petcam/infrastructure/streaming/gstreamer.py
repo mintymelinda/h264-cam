@@ -84,9 +84,14 @@ class GStreamerRtspServer:
         self._source_id = 0
 
         self.server = self.GstRtspServer.RTSPServer()
+        # Explicitly listen on every interface so clients on the LAN can reach it.
+        self.server.set_address("0.0.0.0")
         self.server.set_service(str(port))
         self.factory = self.GstRtspServer.RTSPMediaFactory()
         self.factory.set_shared(True)
+        # Carry RTP interleaved over the RTSP TCP connection. This avoids
+        # requiring a second, dynamically negotiated UDP port range.
+        self.factory.set_protocols(self.GstRtspServer.RTSPLowerTrans.TCP)
         self.factory.set_launch(RTSP_PIPELINE)
         self.factory.connect("media-configure", self._on_media_configure)
         self.server.get_mount_points().add_factory(path, self.factory)
