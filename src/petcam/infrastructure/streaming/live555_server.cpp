@@ -267,8 +267,9 @@ protected:
     bitrate = 64;
     return AudioSource::createNew(envir());
   }
-  RTPSink* createNewRTPSink(Groupsock* groupsock, unsigned char payload, FramedSource*) override {
-    return SimpleRTPSink::createNew(envir(), groupsock, payload, 8000,
+  RTPSink* createNewRTPSink(Groupsock* groupsock, unsigned char, FramedSource*) override {
+    // PCMU at 8 kHz mono has the static RTP payload type 0.
+    return SimpleRTPSink::createNew(envir(), groupsock, 0, 8000,
       "audio", "PCMU", 1, False, False);
   }
 private:
