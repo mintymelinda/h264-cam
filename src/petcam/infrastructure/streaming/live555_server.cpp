@@ -283,54 +283,53 @@ private:
     std::vector<unsigned char> frame;
     std::chrono::steady_clock::time_point capturedAt{};
     std::size_t queuedFrames = 0;
-    double oldestAgeMs = 0.0;
-    double selectedAgeMs = 0.0;
-    double anchorAgeMs = 0.0;
-    double anchorOffsetMs = 0.0;
+    double packetAgeMs = 0.0;
+    double videoOffsetMs = 0.0;
     bool selectedStart = false;
+    bool videoAnchorAvailable = false;
     {
       std::lock_guard<std::mutex> lock(audioQueueMutex);
-      if (!audioQueue.empty()) {
-        if (!cursorSet_) {
-          // Wait until this session's video source has selected its actual IDR
-          // recovery point; audio must not independently choose a newer edge.
-          if (!sessionStart_->videoStartReady) {
-            nextTask() = envir().taskScheduler().scheduleDelayedTask(5000, retry, this);
-            return;
-          }
-          auto start = petcam::firstAtOrAfter(audioQueue.begin(), audioQueue.end(),
-            sessionStart_->captureTime,
-            [](const AudioFrame& item) { return item.capturedAt; });
-          if (start == audioQueue.end()) {
-            nextTask() = envir().taskScheduler().scheduleDelayedTask(5000, retry, this);
-            return;
-          }
-          cursor_ = start->seq;
-          cursorSet_ = true;
-          selectedStart = true;
-          const auto now = std::chrono::steady_clock::now();
-          anchorAgeMs = std::chrono::duration<double, std::milli>(now - sessionStart_->captureTime).count();
-          selectedAgeMs = std::chrono::duration<double, std::milli>(now - start->capturedAt).count();
-          anchorOffsetMs = std::chrono::duration<double, std::milli>(
-            start->capturedAt - sessionStart_->captureTime).count();
-        }
-        auto it = std::find_if(audioQueue.begin(), audioQueue.end(),
-          [this](const AudioFrame& item) { return item.seq >= cursor_; });
-        if (it == audioQueue.end()) {
-          nextTask() = envir().taskScheduler().scheduleDelayedTask(5000, retry, this);
-          return;
-        }
-        if (it->seq != cursor_) cursor_ = it->seq;
-        frame = it->data;
-        capturedAt = it->capturedAt;
-        cursor_ = it->seq + 1;
-        queuedFrames = audioQueue.size();
-        if (!audioQueue.empty()) {
-          oldestAgeMs = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - audioQueue.front().capturedAt).count();
-        }
+      if (audioQueue.empty()) {
+        nextTask() = envir().taskScheduler().scheduleDelayedTask(5000, retry, this);
+        return;
+      }
+
+      // Audio must not wait for the video source to discover an IDR. Start at
+      // the live edge when PLAY requests audio, then let the shared capture
+      // timestamps establish A/V alignment. Replaying the retained recovery
+      // history here can leave a client several seconds behind live audio.
+      if (!cursorSet_) {
+        const auto& liveFrame = audioQueue.back();
+        cursor_ = liveFrame.seq;
+        cursorSet_ = true;
+        selectedStart = true;
+      }
+
+      auto it = std::find_if(audioQueue.begin(), audioQueue.end(),
+        [this](const AudioFrame& item) { return item.seq >= cursor_; });
+      if (it == audioQueue.end()) {
+        // The consumer fell behind the bounded history. Skip to live rather
+        // than draining stale audio in a burst.
+        const auto& liveFrame = audioQueue.back();
+        cursor_ = liveFrame.seq;
+        it = std::prev(audioQueue.end());
+      } else if (it->seq != cursor_) {
+        cursor_ = it->seq;
+      }
+
+      frame = it->data;
+      capturedAt = it->capturedAt;
+      cursor_ = it->seq + 1;
+      queuedFrames = audioQueue.size();
+      const auto now = std::chrono::steady_clock::now();
+      packetAgeMs = std::chrono::duration<double, std::milli>(now - capturedAt).count();
+      if (sessionStart_->videoStartReady) {
+        videoAnchorAvailable = true;
+        videoOffsetMs = std::chrono::duration<double, std::milli>(
+          capturedAt - sessionStart_->captureTime).count();
       }
     }
+
     if (frame.empty()) {
       nextTask() = envir().taskScheduler().scheduleDelayedTask(5000, retry, this);
       return;
@@ -340,18 +339,23 @@ private:
     fFrameSize = static_cast<unsigned>(size);
     fNumTruncatedBytes = static_cast<unsigned>(frame.size() - size);
     const auto deliveryNow = std::chrono::steady_clock::now();
-    const double packetAgeMs = std::chrono::duration<double, std::milli>(deliveryNow - capturedAt).count();
     if (selectedStart) {
-      std::fprintf(stderr,
-        "PetCam audio sync: session anchor age=%.1fms, selected first packet age=%.1fms, offset=%.1fms\\n",
-        anchorAgeMs, selectedAgeMs, anchorOffsetMs);
+      if (videoAnchorAvailable) {
+        std::fprintf(stderr,
+          "PetCam audio live start: packet age=%.1fms, offset from video anchor=%.1fms\\n",
+          packetAgeMs, videoOffsetMs);
+      } else {
+        std::fprintf(stderr,
+          "PetCam audio live start: packet age=%.1fms, video anchor not ready\\n",
+          packetAgeMs);
+      }
     }
     if (lastAudioDeliveryLog == std::chrono::steady_clock::time_point{} ||
         deliveryNow - lastAudioDeliveryLog >= std::chrono::seconds(1)) {
       lastAudioDeliveryLog = deliveryNow;
       std::fprintf(stderr,
-        "PetCam audio delivery: packet age=%.1fms, queue depth=%zu, oldest queued age=%.1fms\\n",
-        packetAgeMs, queuedFrames, oldestAgeMs);
+        "PetCam audio delivery: packet age=%.1fms, queue depth=%zu\\n",
+        packetAgeMs, queuedFrames);
     }
     fPresentationTime = presentationClock.toTimeval(capturedAt);
     fDurationInMicroseconds = static_cast<unsigned>(kAudioPacketMs10 * 100);
