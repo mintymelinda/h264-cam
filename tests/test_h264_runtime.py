@@ -40,7 +40,19 @@ class ShortConfigurationTests(unittest.TestCase):
             "resolution": "1280x720",
             "fps": 30,
         })
-        self.assertEqual(set(config), {"source", "device", "physical_path", "resolution", "fps"})
+        self.assertEqual(
+            set(config),
+            {"source", "device", "physical_path", "resolution", "fps", "audio"},
+        )
+        self.assertEqual(config["audio"], {
+            "sample_rate": 48000,
+            "channels": 2,
+            "input_format": "S16_LE",
+            "output_codec": "OPUS",
+            "bitrate": 128000,
+            "packet_ms": 20.0,
+            "device": "auto",
+        })
 
 
 class CameraModeTests(unittest.TestCase):

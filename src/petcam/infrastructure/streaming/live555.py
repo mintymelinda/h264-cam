@@ -143,11 +143,12 @@ def build_capture_command(status: dict) -> list[str]:
 
 
 class PcmAudioFramer:
-    """Turn arbitrary ALSA pipe reads into exact 20 ms stereo PCM frames."""
+    """Turn arbitrary ALSA pipe reads into exact configured Opus PCM frames."""
 
-    FRAME_BYTES = 3840  # 960 stereo S16_LE sample frames at 48 kHz.
-
-    def __init__(self) -> None:
+    def __init__(self, sample_rate: int = 48000, channels: int = 2, packet_ms: float = 20) -> None:
+        self.frame_bytes = int(sample_rate * packet_ms / 1000) * channels * 2
+        if self.frame_bytes <= 0:
+            raise ValueError("Invalid PCM frame configuration.")
         self._pending = bytearray()
 
     def feed(self, chunk: bytes) -> list[bytes]:
@@ -155,9 +156,9 @@ class PcmAudioFramer:
             return []
         self._pending.extend(chunk)
         frames = []
-        while len(self._pending) >= self.FRAME_BYTES:
-            frames.append(bytes(self._pending[:self.FRAME_BYTES]))
-            del self._pending[:self.FRAME_BYTES]
+        while len(self._pending) >= self.frame_bytes:
+            frames.append(bytes(self._pending[:self.frame_bytes]))
+            del self._pending[:self.frame_bytes]
         return frames
 
 
@@ -227,23 +228,29 @@ def set_alsa_capture_volume(device: str) -> None:
         )
 
 
-def build_audio_capture_command() -> list[str] | None:
-    """Capture stereo 48 kHz signed PCM for the Live555 Opus audio track."""
+def build_audio_capture_command(camera_status: dict | None = None) -> list[str] | None:
+    """Capture the configured signed PCM mode for the Live555 Opus audio track."""
     if os.environ.get("PETCAM_AUDIO", "1").strip().lower() in {"0", "false", "no", "off"}:
         return None
     if not shutil.which("arecord"):
         raise Live555Error("arecord is missing; install alsa-utils to enable microphone audio.")
 
-    device = os.environ.get("PETCAM_AUDIO_DEVICE", "auto").strip()
+    audio = (camera_status or {}).get("audio", {})
+    device = str(audio.get("device") or os.environ.get("PETCAM_AUDIO_DEVICE", "auto")).strip()
     if not device or any(char in device for char in "\r\n"):
         raise Live555Error("PETCAM_AUDIO_DEVICE must be a non-empty ALSA capture device name.")
     if device.lower() == "auto":
         device = _detect_alsa_capture_device()
 
+    rate = int(audio.get("sample_rate", 48000))
+    channels = int(audio.get("channels", 2))
+    packet_ms = float(audio.get("packet_ms", 20))
+    samples = int(rate * packet_ms / 1000)
     return [
         "arecord", "--quiet", "--device", device,
-        "--format", "S16_LE", "--rate", "48000", "--channels", "2",
-        "--file-type", "raw", "--period-size", "960", "--buffer-size", "3840",
+        "--format", "S16_LE", "--rate", str(rate), "--channels", str(channels),
+        "--file-type", "raw", "--period-size", str(samples),
+        "--buffer-size", str(samples * 4),
     ]
 
 
@@ -260,6 +267,10 @@ class Live555Server:
             self.library = ctypes.CDLL(str(library_path))
         except OSError as error:
             raise Live555Error(f"Unable to load Live555 native library: {error}") from error
+        self.library.petcam_configure_audio.argtypes = [
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int
+        ]
+        self.library.petcam_configure_audio.restype = ctypes.c_int
         self.library.petcam_start.argtypes = [ctypes.c_ushort, ctypes.c_char_p]
         self.library.petcam_start.restype = ctypes.c_int
         self.library.petcam_push_nal.argtypes = [
@@ -282,11 +293,18 @@ class Live555Server:
         self.library.petcam_nal_type_count.argtypes = [ctypes.c_uint]
         self.library.petcam_nal_type_count.restype = ctypes.c_ulonglong
 
+    def configure_audio(self, audio: dict) -> None:
+        packet_ms10 = round(float(audio.get("packet_ms", 20)) * 10)
+        result = self.library.petcam_configure_audio(
+            int(audio.get("sample_rate", 48000)),
+            int(audio.get("channels", 2)),
+            int(audio.get("bitrate", 128000)),
+            packet_ms10,
+        )
+        if result != 0:
+            raise Live555Error("The native Opus encoder rejected the selected audio configuration.")
+
     def push_audio_pcm(self, pcm: bytes) -> None:
-        if len(pcm) != PcmAudioFramer.FRAME_BYTES:
-            raise Live555Error(
-                f"Microphone PCM frames must contain exactly {PcmAudioFramer.FRAME_BYTES} bytes."
-            )
         buffer = (ctypes.c_ubyte * len(pcm)).from_buffer_copy(pcm)
         if self.library.petcam_push_audio_pcm(buffer, len(pcm)) != 0:
             raise Live555Error("Unable to queue microphone audio.")
@@ -463,12 +481,14 @@ def run_server(camera_status: dict) -> int:
             reader_error["message"] = str(error)
             logging.exception("H.264 capture/publishing failed")
 
-    def read_audio_capture() -> None:
+    def read_audio_capture(audio: dict) -> None:
         assert audio_capture is not None and audio_capture.stdout is not None
-        framer = PcmAudioFramer()
+        framer = PcmAudioFramer(
+            int(audio["sample_rate"]), int(audio["channels"]), float(audio["packet_ms"])
+        )
         try:
             while not stop_reader.is_set():
-                chunk = audio_capture.stdout.read(PcmAudioFramer.FRAME_BYTES)
+                chunk = audio_capture.stdout.read(framer.frame_bytes)
                 if not chunk:
                     if not stop_reader.is_set():
                         audio_reader_error["message"] = "ALSA microphone capture stopped unexpectedly."
@@ -487,9 +507,11 @@ def run_server(camera_status: dict) -> int:
     previous_nal_count = 0
     previous_sample_at = started_at
     try:
+        audio = camera_status.get("audio", {})
+        server.configure_audio(audio)
         server.start()
         server.clear_audio()
-        audio_command = build_audio_capture_command()
+        audio_command = build_audio_capture_command(camera_status)
         if audio_command is not None:
             audio_device = audio_command[audio_command.index("--device") + 1]
             set_alsa_capture_volume(audio_device)
@@ -497,14 +519,14 @@ def run_server(camera_status: dict) -> int:
             try:
                 audio_capture = subprocess.Popen(
                     audio_command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL, bufsize=0,
+                    stderr=None, bufsize=0,
                 )
             except OSError as error:
                 raise Live555Error(f"Unable to start ALSA microphone capture: {error}") from error
             if audio_capture.stdout is None:
                 raise Live555Error("Unable to open the microphone capture pipe.")
             audio_reader = threading.Thread(
-                target=read_audio_capture, name="petcam-audio-capture", daemon=True
+                target=read_audio_capture, args=(audio,), name="petcam-audio-capture", daemon=True
             )
             audio_reader.start()
             logging.info("Microphone audio enabled with command: %s", " ".join(audio_command))
