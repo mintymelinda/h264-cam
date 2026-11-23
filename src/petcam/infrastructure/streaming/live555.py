@@ -497,7 +497,7 @@ def run_server(camera_status: dict) -> int:
             try:
                 audio_capture = subprocess.Popen(
                     audio_command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL, bufsize=0,
+                    stderr=None, bufsize=0,
                 )
             except OSError as error:
                 raise Live555Error(f"Unable to start ALSA microphone capture: {error}") from error
