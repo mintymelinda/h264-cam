@@ -47,7 +47,7 @@ done < "$REPO_ROOT/requirements.apt"
 (("${#APT_PACKAGES[@]}" > 0)) || fail "No apt packages were declared in requirements.apt."
 log "Installing native H.264 capture and GStreamer RTSP dependencies."
 apt-get install -y --no-install-recommends --no-upgrade "${APT_PACKAGES[@]}"
-log "Installing only the GStreamer H.264 parser plugin required by PetCam."
+log "Installing the minimal GStreamer RTSP, appsrc, RTP and H.264 runtime."
 bash "$REPO_ROOT/scripts/install-gstreamer-runtime.sh"
 log "Installing the Python application source."
 install -d -m 0755 "$APP_ROOT" /usr/local/bin
