@@ -215,6 +215,37 @@ def wait_for_enter(stdscr, title: str, message: str) -> None:
         pass
 
 
+def configure_audio(stdscr) -> dict:
+    rates = [8000, 12000, 16000, 24000, 48000]
+    index = select_menu(stdscr, "Step 4 · Audio sample rate",
+        "Choose an Opus-compatible ALSA capture rate.",
+        ["8 kHz", "12 kHz", "16 kHz", "24 kHz", "48 kHz"])
+    if index is None:
+        raise KeyboardInterrupt
+    sample_rate = rates[index]
+    index = select_menu(stdscr, "Step 5 · Audio channels",
+        "The Opus track supports mono or stereo.",
+        ["Mono", "Stereo"])
+    if index is None:
+        raise KeyboardInterrupt
+    channels = index + 1
+    bitrates = [64000, 96000, 128000, 160000, 192000, 256000]
+    index = select_menu(stdscr, "Step 6 · Opus output bitrate",
+        "Select the encoded network bitrate.",
+        [str(rate // 1000) + " kbit/s" for rate in bitrates])
+    if index is None:
+        raise KeyboardInterrupt
+    durations = [2.5, 5, 10, 20, 40, 60]
+    index = select_menu(stdscr, "Step 7 · Opus packet duration",
+        "20 ms is the default. Only legal Opus packet durations are offered.",
+        [str(duration) + " ms" for duration in durations])
+    if index is None:
+        raise KeyboardInterrupt
+    return {"sample_rate": sample_rate, "channels": channels,
+            "input_format": "S16_LE", "output_codec": "OPUS",
+            "bitrate": bitrates[2 if index < 0 else 2], "packet_ms": durations[index]}
+
+
 def guided_configuration(stdscr) -> dict:
     while True:
         source_index = select_menu(
@@ -291,9 +322,13 @@ def guided_configuration(stdscr) -> dict:
                 continue
 
             mode = modes[mode_index]
+            try:
+                audio = configure_audio(stdscr)
+            except KeyboardInterrupt:
+                continue
             confirm_index = select_menu(
                 stdscr,
-                "Step 4 · Confirm stream",
+                "Step 8 · Confirm stream",
                 f"{_camera_label(source, camera)}\n{mode['resolution']} at {mode['fps']:g} FPS · H.264",
                 ["Activate RTSP stream", "Return to capture mode selection"],
             )
@@ -305,6 +340,7 @@ def guided_configuration(stdscr) -> dict:
                         "physical_path": camera.get("physical_path", ""),
                         "resolution": mode["resolution"],
                         "fps": mode["fps"],
+                        "audio": audio,
                     })
                 return validate_config({
                     "source": source,
@@ -313,6 +349,7 @@ def guided_configuration(stdscr) -> dict:
                     "device_path": camera.get("device_path", ""),
                     "resolution": mode["resolution"],
                     "fps": mode["fps"],
+                    "audio": audio,
                 })
             # Confirm's second option or Esc returns to Step 1.
             break
@@ -399,6 +436,7 @@ def run_stream(config: dict, stdscr) -> int:
     try:
         marker = {
             "pid": os.getpid(),
+            "audio": config.get("audio", {}),
             "backend": config["source"].lower(),
             "resolution": config["resolution"],
             "fps": config["fps"],
