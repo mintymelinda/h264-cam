@@ -110,9 +110,11 @@ Optional environment variables can be set before launching `petcam`:
 To inspect ALSA capture devices manually, run `arecord -l`. Automatic selection chooses
 the Razer Kiyo when it is listed, then falls back to the first available capture device.
 To force a specific ALSA device, set `PETCAM_AUDIO_DEVICE=plughw:1,0` (replace the card
-and device numbers with those shown by `arecord -l`). Capture requests native-format
-stereo S16_LE at 48 kHz in 20 ms frames. The Razer Kiyo advertises this exact format, so
-its capture path does not need ALSA rate or channel conversion. Opus encodes the frames
+and device numbers with those shown by `arecord -l`). At startup, PetCam sets the selected
+card's ALSA `Mic` capture volume to 100% and enables capture. This requires the `amixer`
+utility and a numeric `hw:CARD,DEVICE` or `plughw:CARD,DEVICE` device name. Capture requests
+native-format stereo S16_LE at 48 kHz in 20 ms frames. The Razer Kiyo advertises this exact
+format, so its capture path does not need ALSA rate or channel conversion. Opus encodes the frames
 as 20 ms stereo RTP packets at 128 kbit/s with encoder complexity 5. The RTP clock is 48 kHz; Live555 assigns the dynamic RTP payload type.
 Set `PETCAM_AUDIO=0` only when video-only output is required. Use
 `scripts/check_rtsp_tcp.py --require-audio rtsp://DEVICE-HOSTNAME.local:8554/petcam`

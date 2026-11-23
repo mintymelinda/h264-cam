@@ -9,6 +9,7 @@ from petcam.infrastructure.streaming.live555 import (
     Live555Error,
     PcmAudioFramer,
     build_audio_capture_command,
+    set_alsa_capture_volume,
 )
 
 
@@ -26,6 +27,58 @@ class PcmAudioFramerTests(unittest.TestCase):
         frames += framer.feed(third)
         self.assertEqual(len(frames), 2)
         self.assertEqual(frames[1], second[3717:] + third)
+
+
+class AlsaCaptureVolumeTests(unittest.TestCase):
+    def test_sets_microphone_capture_volume_to_100_percent(self):
+        with (
+            patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/amixer"),
+            patch(
+                "petcam.infrastructure.streaming.live555.subprocess.run",
+                return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+            ) as run,
+        ):
+            set_alsa_capture_volume("plughw:1,0")
+
+        run.assert_called_once_with(
+            ["/usr/bin/amixer", "-c", "1", "sset", "Mic", "100%", "cap"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+    def test_accepts_raw_hw_device_names(self):
+        with (
+            patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/amixer"),
+            patch(
+                "petcam.infrastructure.streaming.live555.subprocess.run",
+                return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+            ) as run,
+        ):
+            set_alsa_capture_volume("hw:2,0")
+
+        self.assertEqual(run.call_args.args[0][2], "2")
+
+    def test_rejects_device_names_without_a_numeric_card(self):
+        with self.assertRaisesRegex(Live555Error, "numeric hw:CARD,DEVICE"):
+            set_alsa_capture_volume("default")
+
+    def test_fails_clearly_when_amixer_is_missing(self):
+        with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value=None):
+            with self.assertRaisesRegex(Live555Error, "amixer is missing"):
+                set_alsa_capture_volume("plughw:1,0")
+
+    def test_reports_mixer_failure(self):
+        with (
+            patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/amixer"),
+            patch(
+                "petcam.infrastructure.streaming.live555.subprocess.run",
+                return_value=SimpleNamespace(returncode=1, stdout="", stderr="No such control"),
+            ),
+        ):
+            with self.assertRaisesRegex(Live555Error, "capture volume to 100%"):
+                set_alsa_capture_volume("plughw:1,0")
 
 
 class AudioCaptureCommandTests(unittest.TestCase):
