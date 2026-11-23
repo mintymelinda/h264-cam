@@ -14,8 +14,8 @@ int main() {
   OpusEncoder* encoder = opus_encoder_create(kRate, kChannels, OPUS_APPLICATION_AUDIO, &error);
   assert(encoder != nullptr);
   assert(error == OPUS_OK);
-  assert(opus_encoder_ctl(encoder, OPUS_SET_BITRATE(64000)) == OPUS_OK);
-  assert(opus_encoder_ctl(encoder, OPUS_SET_COMPLEXITY(1)) == OPUS_OK);
+  assert(opus_encoder_ctl(encoder, OPUS_SET_BITRATE(128000)) == OPUS_OK);
+  assert(opus_encoder_ctl(encoder, OPUS_SET_COMPLEXITY(5)) == OPUS_OK);
 
   std::array<opus_int16, kFrameSamples * kChannels> input{};
   for (int frame = 0; frame < kFrameSamples; ++frame) {
