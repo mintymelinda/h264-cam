@@ -269,7 +269,7 @@ protected:
   }
   RTPSink* createNewRTPSink(Groupsock* groupsock, unsigned char payload, FramedSource*) override {
     return SimpleRTPSink::createNew(envir(), groupsock, payload, 8000,
-      "audio", "PCMU", 1, True, False);
+      "audio", "PCMU", 1, False, False);
   }
 private:
   ~AudioSubsession() override = default;
