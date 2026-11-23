@@ -1,7 +1,7 @@
 # H264 Cam
 
 H264 Cam serves a camera's native H.264 capture stream over RTSP using Live555. The same
-RTSP session includes a stereo Opus microphone audio track captured through ALSA at
+RTSP session includes a stereo uncompressed L16 PCM microphone audio track captured through ALSA at
 48 kHz; automatic device selection prefers the Razer Kiyo microphone. PetCam does not
 decode or transcode the video, or provide a web interface, motion processing, timelapse,
 or Home Assistant
@@ -23,8 +23,7 @@ sudo ./install.sh
 ```
 
 The installer reads the Debian package list from `requirements.apt`. It installs the
-Python standard library runtime, camera and audio utilities, Live555 and Opus development
-libraries, and the native compiler needed to build PetCam's Live555 server. There are no
+Python standard library runtime, camera and audio utilities, Live555 development libraries, and the native compiler needed to build PetCam's Live555 server. There are no
 third-party Python packages to install: the application uses the Python standard library
 and its RTSP/RTP implementation is the native Live555 library. The compiler and
 development packages remain installed; the installer deliberately does not run package
@@ -92,7 +91,7 @@ python3 scripts/check_rtsp_tcp.py rtsp://DEVICE-HOSTNAME.local:8554/petcam
 ```
 
 CI runs a local Live555 microphone-track self-test using synthetic PCM frames. It verifies
-the RTSP audio SDP, TCP SETUP and PLAY negotiation, and receipt of a 20 ms Opus RTP packet.
+the RTSP audio SDP, TCP SETUP and PLAY negotiation, and receipt of a 5 ms L16 RTP packet.
 This test deliberately does not open a camera or microphone device, so it runs in a hardware-free
 CI environment. To probe an actual camera stream, pass its RTSP URL to
 `scripts/check_rtsp_tcp.py`; this checks RTSP/TCP negotiation and receipt of video RTP data.
@@ -116,10 +115,12 @@ To force a specific ALSA device, set `PETCAM_AUDIO_DEVICE=plughw:1,0` (replace t
 and device numbers with those shown by `arecord -l`). At startup, PetCam sets the selected
 card's ALSA `Mic` capture volume to 100% and enables capture. This requires the
 `amixer` utility and a numeric `hw:CARD,DEVICE` or `plughw:CARD,DEVICE` device name.
-Capture requests native-format stereo S16_LE at 48 kHz in 20 ms frames. The Razer Kiyo
+Capture requests native-format stereo S16_LE at 48 kHz in 5 ms frames. The Razer Kiyo
 advertises this exact format, so its capture path does not need ALSA rate or channel conversion.
-Opus encodes the frames as 20 ms stereo RTP packets at 128 kbit/s with encoder complexity 5.
-The RTP clock is 48 kHz; Live555 assigns the dynamic RTP payload type. Set `PETCAM_AUDIO=0`
+PetCam sends the samples uncompressed as RTP L16, converting little-endian ALSA samples to
+network byte order. A 5 ms packet contains 960 bytes at 48 kHz stereo, keeping it below a
+typical Ethernet MTU. The RTP clock matches the selected sample rate; Live555 assigns the
+dynamic RTP payload type. Set `PETCAM_AUDIO=0`
 only when video-only output is required. Use
 `scripts/check_rtsp_tcp.py --require-audio rtsp://DEVICE-HOSTNAME.local:8554/petcam`
 to verify both video and microphone RTP delivery from the running device.

@@ -15,7 +15,7 @@ from petcam.infrastructure.streaming.live555 import (
 
 class PcmAudioFramerTests(unittest.TestCase):
     def test_frames_arbitrary_partial_reads_without_dropping_bytes(self):
-        framer = PcmAudioFramer()
+        framer = PcmAudioFramer(packet_ms=20)
         first = bytes(range(123))
         second = bytes((index % 256 for index in range(4000)))
         third = b"x" * 3557
@@ -111,8 +111,8 @@ class AudioCaptureCommandTests(unittest.TestCase):
         self.assertEqual(command[command.index("--device") + 1], "plughw:2,0")
         self.assertEqual(command[command.index("--rate") + 1], "48000")
         self.assertEqual(command[command.index("--channels") + 1], "2")
-        self.assertEqual(command[command.index("--period-size") + 1], "960")
-        self.assertEqual(command[command.index("--buffer-size") + 1], "3840")
+        self.assertEqual(command[command.index("--period-size") + 1], "240")
+        self.assertEqual(command[command.index("--buffer-size") + 1], "960")
         self.assertIn("--file-type", command)
 
     def test_auto_selection_uses_first_capture_device_when_kiyo_name_is_unavailable(self):
