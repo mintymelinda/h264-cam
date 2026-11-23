@@ -274,7 +274,12 @@ def probe(
         current_media = None
         for line in sdp_lines:
             if line.lower().startswith("m="):
-                current_media = line[2:].split(" ", 1)[0].lower()
+                media_fields = line[2:].split()
+                current_media = media_fields[0].lower() if media_fields else None
+                # PCMU/8000 mono is assigned static RTP payload type 0, so
+                # SDP is allowed to omit an explicit a=rtpmap line.
+                if current_media == "audio" and "0" in media_fields[3:]:
+                    audio_codec_found = True
             elif line.lower().startswith("a=control:"):
                 media_control = line.partition(":")[2].strip()
                 if media_control == "*":
