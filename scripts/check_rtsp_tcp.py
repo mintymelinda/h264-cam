@@ -316,7 +316,7 @@ def probe(
             or not 96 <= audio_payload_type <= 127
         ):
             raise RTSPProbeError(
-                "DESCRIBE SDP did not advertise an Opus or Opus or L16 microphone audio track."
+                "DESCRIBE SDP did not advertise an Opus or L16 microphone audio track."
             )
         content_base = describe_headers.get("content-base", url.rstrip("/") + "/")
         if not content_base.endswith("/"):
@@ -399,8 +399,7 @@ def probe_audio(url: str, timeout: float = 5.0) -> tuple[int, int]:
 
         audio_control = None
         audio_payload_types: set[str] = set()
-        l16_payload_type = None
-        current_media = None
+        audio_payload_type = None
         for line in sdp.decode("utf-8", "replace").splitlines():
             if line.lower().startswith("m="):
                 media_fields = line[2:].split()
@@ -412,15 +411,11 @@ def probe_audio(url: str, timeout: float = 5.0) -> tuple[int, int]:
                     audio_control = value
             elif current_media == "audio" and line.lower().startswith("a=rtpmap:"):
                 payload_field, separator, codec = line.partition(":")[2].partition(" ")
-                if (
-                    separator
-                    and payload_field in audio_payload_types
-                    and codec.strip().upper().startswith("L16/")
-                ):
-                    l16_payload_type = int(payload_field)
+                if separator and payload_field in audio_payload_types and codec.strip().upper().split("/", 1)[0] in {"L16", "OPUS"}:
+                    audio_payload_type = int(payload_field)
 
-        if not audio_control or l16_payload_type is None or not 96 <= audio_payload_type <= 127:
-            raise RTSPProbeError("DESCRIBE SDP did not advertise an L16 microphone audio track.")
+        if not audio_control or audio_payload_type is None or not 96 <= audio_payload_type <= 127:
+            raise RTSPProbeError("DESCRIBE SDP did not advertise an Opus or L16 microphone audio track.")
 
         content_base = describe_headers.get("content-base", url.rstrip("/") + "/")
         if not content_base.endswith("/"):
