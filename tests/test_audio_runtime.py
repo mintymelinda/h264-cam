@@ -16,16 +16,16 @@ class PcmAudioFramerTests(unittest.TestCase):
     def test_frames_arbitrary_partial_reads_without_dropping_bytes(self):
         framer = PcmAudioFramer()
         first = bytes(range(123))
-        second = bytes((index % 256 for index in range(500)))
-        third = b"x" * 17
+        second = bytes((index % 256 for index in range(4000)))
+        third = b"x" * 3557
 
         self.assertEqual(framer.feed(first), [])
         frames = framer.feed(second)
         self.assertEqual(len(frames), 1)
-        self.assertEqual(frames[0], first + second[:197])
+        self.assertEqual(frames[0], first + second[:3717])
         frames += framer.feed(third)
         self.assertEqual(len(frames), 2)
-        self.assertEqual(frames[1], second[197:] + third)
+        self.assertEqual(frames[1], second[3717:] + third)
 
 
 class AudioCaptureCommandTests(unittest.TestCase):

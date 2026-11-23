@@ -1,4 +1,5 @@
 #include <liveMedia.hh>
+#include <opus/opus.h>
 #include <H264VideoStreamDiscreteFramer.hh>
 #include <SimpleRTPSink.hh>
 #include <BasicUsageEnvironment.hh>
@@ -18,7 +19,6 @@
 #include <utility>
 #include <vector>
 #include "nal_chunk.hpp"
-#include "pcmu.hpp"
 
 namespace {
 constexpr std::size_t kMaxNal = 16U * 1024U * 1024U;
@@ -38,6 +38,15 @@ struct AudioFrame { std::uint64_t seq; std::vector<unsigned char> data; };
 std::deque<AudioFrame> audioQueue;
 std::uint64_t audioSequence = 1;
 constexpr std::size_t kMaxAudioQueueFrames = 100;
+constexpr int kAudioSampleRate = 48000;
+constexpr int kAudioChannels = 2;
+constexpr int kAudioFrameSamples = 960; // 20 ms at 48 kHz.
+constexpr std::size_t kAudioFrameBytes =
+  static_cast<std::size_t>(kAudioFrameSamples * kAudioChannels * 2);
+constexpr int kAudioBitrate = 64000;
+constexpr int kAudioComplexity = 1;
+constexpr unsigned char kAudioPayloadType = 96;
+OpusEncoder* audioEncoder = nullptr;
 std::uint64_t sequence = 1;
 std::thread worker;
 TaskScheduler* scheduler = nullptr;
@@ -264,13 +273,13 @@ public:
 protected:
   explicit AudioSubsession(UsageEnvironment& env) : OnDemandServerMediaSubsession(env, False) {}
   FramedSource* createNewStreamSource(unsigned, unsigned& bitrate) override {
-    bitrate = 64;
+    bitrate = kAudioBitrate / 1000;
     return AudioSource::createNew(envir());
   }
   RTPSink* createNewRTPSink(Groupsock* groupsock, unsigned char, FramedSource*) override {
-    // PCMU at 8 kHz mono has the static RTP payload type 0.
-    return SimpleRTPSink::createNew(envir(), groupsock, 0, 8000,
-      "audio", "PCMU", 1, False, False);
+    // Opus uses a dynamic payload type and a fixed 48 kHz RTP clock.
+    return SimpleRTPSink::createNew(envir(), groupsock, kAudioPayloadType,
+      kAudioSampleRate, "audio", "OPUS", kAudioChannels, False, False);
   }
 private:
   ~AudioSubsession() override = default;
@@ -356,7 +365,31 @@ int petcam_start(unsigned short port, const char* path) {
   std::unique_lock<std::mutex> lock(lifecycleMutex);
   if (worker.joinable()) return -1;
   connectedClients.store(0, std::memory_order_relaxed);
-  { std::lock_guard<std::mutex> audioLock(audioQueueMutex); audioQueue.clear(); audioSequence = 1; }
+  {
+    std::lock_guard<std::mutex> audioLock(audioQueueMutex);
+    audioQueue.clear();
+    audioSequence = 1;
+    if (audioEncoder != nullptr) {
+      opus_encoder_destroy(audioEncoder);
+      audioEncoder = nullptr;
+    }
+    int opusError = OPUS_OK;
+    audioEncoder = opus_encoder_create(
+      kAudioSampleRate, kAudioChannels, OPUS_APPLICATION_AUDIO, &opusError
+    );
+    if (audioEncoder == nullptr || opusError != OPUS_OK) {
+      startupMessage = std::string("Unable to create the Opus encoder: ") +
+        opus_strerror(opusError);
+      return -1;
+    }
+    if (opus_encoder_ctl(audioEncoder, OPUS_SET_BITRATE(kAudioBitrate)) != OPUS_OK ||
+        opus_encoder_ctl(audioEncoder, OPUS_SET_COMPLEXITY(kAudioComplexity)) != OPUS_OK) {
+      startupMessage = "Unable to configure the Opus encoder.";
+      opus_encoder_destroy(audioEncoder);
+      audioEncoder = nullptr;
+      return -1;
+    }
+  }
   deliveredNals.store(0, std::memory_order_relaxed);
   for (auto& count : deliveredNalsByType) count.store(0, std::memory_order_relaxed);
   startupDone = false;
@@ -372,16 +405,30 @@ int petcam_start(unsigned short port, const char* path) {
 }
 
 int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
-  if (!data || size != 320) return -1; // 160 mono S16_LE samples at 8 kHz (20 ms).
-  std::vector<unsigned char> encoded;
-  encoded.reserve(160);
-  for (std::size_t i = 0; i < size; i += 2) {
-    const auto sample = static_cast<std::int16_t>(
-      static_cast<unsigned>(data[i]) | (static_cast<unsigned>(data[i + 1]) << 8));
-    encoded.push_back(petcam::encodePcmuSample(sample));
+  if (!data || size != kAudioFrameBytes) return -1;
+  std::array<opus_int16, kAudioFrameSamples * kAudioChannels> pcm{};
+  for (std::size_t i = 0; i < pcm.size(); ++i) {
+    const std::size_t offset = i * 2;
+    const auto raw = static_cast<unsigned>(
+      static_cast<unsigned>(data[offset]) |
+      (static_cast<unsigned>(data[offset + 1]) << 8)
+    );
+    const int signedSample = raw <= 32767U
+      ? static_cast<int>(raw)
+      : static_cast<int>(raw) - 65536;
+    pcm[i] = static_cast<opus_int16>(signedSample);
   }
+
   std::lock_guard<std::mutex> lock(audioQueueMutex);
-  audioQueue.push_back(AudioFrame{audioSequence++, std::move(encoded)});
+  if (audioEncoder == nullptr) return -1;
+  std::array<unsigned char, 4000> encoded{};
+  const int encodedSize = opus_encode(
+    audioEncoder, pcm.data(), kAudioFrameSamples,
+    encoded.data(), static_cast<opus_int32>(encoded.size())
+  );
+  if (encodedSize <= 0) return -1;
+  std::vector<unsigned char> packet(encoded.begin(), encoded.begin() + encodedSize);
+  audioQueue.push_back(AudioFrame{audioSequence++, std::move(packet)});
   while (audioQueue.size() > kMaxAudioQueueFrames) audioQueue.pop_front();
   return 0;
 }
@@ -427,7 +474,14 @@ void petcam_stop() {
   std::lock_guard<std::mutex> lock(queueMutex);
   queue.clear();
   queueBytes = 0;
-  { std::lock_guard<std::mutex> audioLock(audioQueueMutex); audioQueue.clear(); }
+  {
+    std::lock_guard<std::mutex> audioLock(audioQueueMutex);
+    audioQueue.clear();
+    if (audioEncoder != nullptr) {
+      opus_encoder_destroy(audioEncoder);
+      audioEncoder = nullptr;
+    }
+  }
   sequence = 1;
 }
 }

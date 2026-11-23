@@ -127,13 +127,13 @@ class RTSPConnection:
         except RTSPProbeError as error:
             raise RTSPProbeError(f"Microphone audio RTP did not arrive: {error}") from error
         _, timestamp, _, payload_type, payload = self._rtp_payload(packet)
-        if payload_type != 0:
+        if payload_type != 96:
             raise RTSPProbeError(
-                f"Expected static RTP payload type 0 (PCMU), received {payload_type}."
+                f"Expected dynamic RTP payload type 96 (Opus), received {payload_type}."
             )
-        if len(payload) != 160:
+        if len(payload) < 2:
             raise RTSPProbeError(
-                f"Expected a 160-byte 20 ms PCMU payload, received {len(payload)} bytes."
+                f"Expected a non-empty 20 ms Opus packet, received {len(payload)} bytes."
             )
         return len(payload), timestamp
 
@@ -279,16 +279,14 @@ def probe(
         sdp_lines = sdp.decode("utf-8", "replace").splitlines()
         control = None
         audio_control = None
-        audio_codec_found = False
+        opus_payload_type = None
+        audio_payload_types: set[str] = set()
         current_media = None
         for line in sdp_lines:
             if line.lower().startswith("m="):
                 media_fields = line[2:].split()
                 current_media = media_fields[0].lower() if media_fields else None
-                # PCMU/8000 mono is assigned static RTP payload type 0, so
-                # SDP is allowed to omit an explicit a=rtpmap line.
-                if current_media == "audio" and "0" in media_fields[3:]:
-                    audio_codec_found = True
+                audio_payload_types = set(media_fields[3:]) if current_media == "audio" else set()
             elif line.lower().startswith("a=control:"):
                 media_control = line.partition(":")[2].strip()
                 if media_control == "*":
@@ -298,13 +296,20 @@ def probe(
                 elif current_media == "video" and control is None:
                     control = media_control
             elif current_media == "audio" and line.lower().startswith("a=rtpmap:"):
-                if "PCMU/8000" in line.upper():
-                    audio_codec_found = True
+                payload_field, separator, codec = line.partition(":")[2].partition(" ")
+                if (
+                    separator
+                    and payload_field in audio_payload_types
+                    and codec.strip().upper() == "OPUS/48000/2"
+                ):
+                    opus_payload_type = int(payload_field)
 
         if not control:
             raise RTSPProbeError("DESCRIBE SDP did not advertise a video media control URL.")
-        if require_audio and (not audio_control or not audio_codec_found):
-            raise RTSPProbeError("DESCRIBE SDP did not advertise the PCMU/8000 microphone audio track.")
+        if require_audio and (not audio_control or opus_payload_type != 96):
+            raise RTSPProbeError(
+                "DESCRIBE SDP did not advertise the Opus/48000/2 microphone audio track on payload type 96."
+            )
         content_base = describe_headers.get("content-base", url.rstrip("/") + "/")
         if not content_base.endswith("/"):
             content_base += "/"
@@ -363,6 +368,8 @@ def probe(
                 connection.wait_for_audio(timeout)
             return video_result
         channel, packet_size = connection.wait_for_rtp(timeout)
+        if require_audio:
+            connection.wait_for_audio(timeout, channel=2)
         return 1, packet_size, channel
     finally:
         connection.close()
@@ -383,26 +390,30 @@ def probe_audio(url: str, timeout: float = 5.0) -> tuple[int, int]:
             raise RTSPProbeError(f"DESCRIBE failed with RTSP status {status}.")
 
         audio_control = None
-        audio_codec_found = False
+        audio_payload_types: set[str] = set()
+        opus_payload_type = None
         current_media = None
         for line in sdp.decode("utf-8", "replace").splitlines():
             if line.lower().startswith("m="):
                 media_fields = line[2:].split()
                 current_media = media_fields[0].lower() if media_fields else None
-                # PCMU/8000 mono is RTP's static payload type 0.
-                if current_media == "audio" and "0" in media_fields[3:]:
-                    audio_codec_found = True
+                audio_payload_types = set(media_fields[3:]) if current_media == "audio" else set()
             elif line.lower().startswith("a=control:") and current_media == "audio":
                 value = line.partition(":")[2].strip()
                 if value != "*":
                     audio_control = value
             elif current_media == "audio" and line.lower().startswith("a=rtpmap:"):
-                if "PCMU/8000" in line.upper():
-                    audio_codec_found = True
+                payload_field, separator, codec = line.partition(":")[2].partition(" ")
+                if (
+                    separator
+                    and payload_field in audio_payload_types
+                    and codec.strip().upper() == "OPUS/48000/2"
+                ):
+                    opus_payload_type = int(payload_field)
 
-        if not audio_control or not audio_codec_found:
+        if not audio_control or opus_payload_type != 96:
             raise RTSPProbeError(
-                "DESCRIBE SDP did not advertise the PCMU/8000 microphone audio track."
+                "DESCRIBE SDP did not advertise the Opus/48000/2 microphone audio track on payload type 96."
             )
 
         content_base = describe_headers.get("content-base", url.rstrip("/") + "/")
@@ -451,14 +462,14 @@ def run_self_test(timeout: float) -> tuple[int, int, int]:
     stop_audio = threading.Event()
 
     def publish_test_audio() -> None:
-        frame = bytes(320)  # 20 ms of synthetic mono S16_LE silence at 8 kHz.
+        frame = bytes(3840)  # 20 ms of synthetic stereo S16_LE silence at 48 kHz.
         next_frame = time.monotonic()
         while not stop_audio.is_set():
             server.push_audio_pcm(frame)
             next_frame += 0.02
             stop_audio.wait(max(0.0, next_frame - time.monotonic()))
 
-    audio_thread = threading.Thread(target=publish_test_audio, name="pcmu-self-test", daemon=True)
+    audio_thread = threading.Thread(target=publish_test_audio, name="opus-self-test", daemon=True)
     try:
         audio_thread.start()
         payload_size, timestamp = probe_audio(
@@ -491,6 +502,11 @@ def main() -> int:
         action="store_true",
         help="start the installed native Live555 library locally and run the TCP probe",
     )
+    parser.add_argument(
+        "--require-audio",
+        action="store_true",
+        help="also require the Opus microphone track and receive an audio RTP packet",
+    )
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout must be greater than zero")
@@ -501,15 +517,15 @@ def main() -> int:
         packet_count, nal_size, timestamp = (
             run_self_test(args.timeout)
             if args.self_test
-            else probe(args.url, args.timeout)
+            else probe(args.url, args.timeout, require_audio=args.require_audio)
         )
     except (OSError, RTSPProbeError, RuntimeError) as error:
         print(f"RTSP/TCP probe FAILED: {error}", file=sys.stderr)
         return 1
     if args.self_test:
         print(
-            "RTSP audio self-test PASSED: OPTIONS, DESCRIBE, microphone TCP SETUP, "
-            f"PLAY, and a live {nal_size}-byte PCMU RTP payload (timestamp {timestamp}). "
+            "RTSP audio self-test PASSED: OPTIONS, DESCRIBE, Opus/48000/2 TCP SETUP, "
+            f"PLAY, and a live {nal_size}-byte Opus RTP payload (timestamp {timestamp}). "
             "The test uses synthetic audio and does not require a camera or microphone."
         )
     else:

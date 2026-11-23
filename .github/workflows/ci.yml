@@ -27,6 +27,7 @@ jobs:
             python3 \
             g++ \
             liblivemedia-dev \
+            libopus-dev \
             libssl-dev
 
       - name: Check out source
@@ -51,13 +52,13 @@ jobs:
             -o "$RUNNER_TEMP/test_live555_nal_chunks"
           "$RUNNER_TEMP/test_live555_nal_chunks"
 
-      - name: Test PCMU microphone audio encoding
+      - name: Test Opus microphone audio encoding
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror \
-            -Isrc/petcam/infrastructure/streaming \
-            tests/test_live555_pcmu.cpp \
-            -o "$RUNNER_TEMP/test_live555_pcmu"
-          "$RUNNER_TEMP/test_live555_pcmu"
+            tests/test_live555_opus.cpp \
+            -lopus \
+            -o "$RUNNER_TEMP/test_live555_opus"
+          "$RUNNER_TEMP/test_live555_opus"
 
       - name: Build the Live555 shared library
         run: |
@@ -66,7 +67,7 @@ jobs:
             -I/usr/include/BasicUsageEnvironment -I/usr/include/UsageEnvironment \
             src/petcam/infrastructure/streaming/live555_server.cpp \
             -o "$RUNNER_TEMP/libpetcam_live555.so" \
-            -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment -pthread
+            -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment -lopus -pthread
           test -s "$RUNNER_TEMP/libpetcam_live555.so"
           ldd "$RUNNER_TEMP/libpetcam_live555.so"
 

@@ -143,9 +143,9 @@ def build_capture_command(status: dict) -> list[str]:
 
 
 class PcmAudioFramer:
-    """Turn arbitrary ALSA pipe reads into exact 20 ms mono PCM frames."""
+    """Turn arbitrary ALSA pipe reads into exact 20 ms stereo PCM frames."""
 
-    FRAME_BYTES = 320  # 160 S16_LE samples at 8 kHz.
+    FRAME_BYTES = 3840  # 960 stereo S16_LE sample frames at 48 kHz.
 
     def __init__(self) -> None:
         self._pending = bytearray()
@@ -202,7 +202,7 @@ def _detect_alsa_capture_device() -> str:
 
 
 def build_audio_capture_command() -> list[str] | None:
-    """Capture mono 8 kHz signed PCM for the Live555 PCMU audio track."""
+    """Capture stereo 48 kHz signed PCM for the Live555 Opus audio track."""
     if os.environ.get("PETCAM_AUDIO", "1").strip().lower() in {"0", "false", "no", "off"}:
         return None
     if not shutil.which("arecord"):
@@ -216,8 +216,8 @@ def build_audio_capture_command() -> list[str] | None:
 
     return [
         "arecord", "--quiet", "--device", device,
-        "--format", "S16_LE", "--rate", "8000", "--channels", "1",
-        "--file-type", "raw", "--period-size", "160", "--buffer-size", "640",
+        "--format", "S16_LE", "--rate", "48000", "--channels", "2",
+        "--file-type", "raw", "--period-size", "960", "--buffer-size", "3840",
     ]
 
 
@@ -257,8 +257,10 @@ class Live555Server:
         self.library.petcam_nal_type_count.restype = ctypes.c_ulonglong
 
     def push_audio_pcm(self, pcm: bytes) -> None:
-        if len(pcm) != 320:
-            raise Live555Error("Microphone PCM frames must contain exactly 320 bytes.")
+        if len(pcm) != PcmAudioFramer.FRAME_BYTES:
+            raise Live555Error(
+                f"Microphone PCM frames must contain exactly {PcmAudioFramer.FRAME_BYTES} bytes."
+            )
         buffer = (ctypes.c_ubyte * len(pcm)).from_buffer_copy(pcm)
         if self.library.petcam_push_audio_pcm(buffer, len(pcm)) != 0:
             raise Live555Error("Unable to queue microphone audio.")

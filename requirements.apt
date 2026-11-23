@@ -2,6 +2,7 @@
 python3
 v4l-utils
 alsa-utils
+libopus-dev
 rpicam-apps-lite
 liblivemedia116
 liblivemedia-dev
