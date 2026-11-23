@@ -33,6 +33,17 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v5
 
+      - name: Install GStreamer runtime for Python tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \\
+            python3-gi \\
+            gir1.2-gstreamer-1.0 \\
+            gir1.2-gst-rtsp-server-1.0 \\
+            gstreamer1.0-plugins-base \\
+            gstreamer1.0-plugins-good \\
+            gstreamer1.0-plugins-bad
+
       - name: Run Python unit tests
         env:
           PYTHONPATH: src
