@@ -27,7 +27,7 @@ jobs:
             python3 \
             python3-gi \
             gir1.2-gstreamer-1.0 \
-            libgstreamer-plugins-base1.0-0 \\
+            libgstreamer-plugins-base1.0-0
       - name: Check out source
         uses: actions/checkout@v5
 
