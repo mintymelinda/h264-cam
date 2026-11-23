@@ -33,7 +33,9 @@ std::mutex queueMutex, lifecycleMutex;
 std::deque<Nal> queue;
 std::size_t queueBytes = 0;
 std::mutex audioQueueMutex;
-std::deque<std::vector<unsigned char>> audioQueue;
+struct AudioFrame { std::uint64_t seq; std::vector<unsigned char> data; };
+std::deque<AudioFrame> audioQueue;
+std::uint64_t audioSequence = 1;
 constexpr std::size_t kMaxAudioQueueFrames = 100;
 std::uint64_t sequence = 1;
 std::thread worker;
@@ -225,8 +227,19 @@ private:
     {
       std::lock_guard<std::mutex> lock(audioQueueMutex);
       if (!audioQueue.empty()) {
-        frame = std::move(audioQueue.front());
-        audioQueue.pop_front();
+        if (!cursorSet_) {
+          cursor_ = audioQueue.front().seq;
+          cursorSet_ = true;
+        }
+        auto it = std::find_if(audioQueue.begin(), audioQueue.end(),
+          [this](const AudioFrame& item) { return item.seq >= cursor_; });
+        if (it == audioQueue.end()) {
+          nextTask() = envir().taskScheduler().scheduleDelayedTask(5000, retry, this);
+          return;
+        }
+        if (it->seq != cursor_) cursor_ = it->seq;
+        frame = it->data;
+        cursor_ = it->seq + 1;
       }
     }
     if (frame.empty()) {
@@ -241,6 +254,8 @@ private:
     fDurationInMicroseconds = 20000;
     FramedSource::afterGetting(this);
   }
+  std::uint64_t cursor_ = 0;
+  bool cursorSet_ = false;
 };
 class AudioSubsession final : public OnDemandServerMediaSubsession {
 public:
@@ -339,7 +354,7 @@ int petcam_start(unsigned short port, const char* path) {
   std::unique_lock<std::mutex> lock(lifecycleMutex);
   if (worker.joinable()) return -1;
   connectedClients.store(0, std::memory_order_relaxed);
-  { std::lock_guard<std::mutex> audioLock(audioQueueMutex); audioQueue.clear(); }
+  { std::lock_guard<std::mutex> audioLock(audioQueueMutex); audioQueue.clear(); audioSequence = 1; }
   deliveredNals.store(0, std::memory_order_relaxed);
   for (auto& count : deliveredNalsByType) count.store(0, std::memory_order_relaxed);
   startupDone = false;
@@ -370,7 +385,7 @@ int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
     encoded.push_back(static_cast<unsigned char>(~(sign | (exponent << 4) | mantissa)));
   }
   std::lock_guard<std::mutex> lock(audioQueueMutex);
-  audioQueue.push_back(std::move(encoded));
+  audioQueue.push_back(AudioFrame{audioSequence++, std::move(encoded)});
   while (audioQueue.size() > kMaxAudioQueueFrames) audioQueue.pop_front();
   return 0;
 }
