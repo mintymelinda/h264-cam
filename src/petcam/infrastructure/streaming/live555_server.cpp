@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <condition_variable>
+#include <cstdio>
 #include <chrono>
 #include <deque>
 #include <mutex>
@@ -48,6 +49,8 @@ struct AudioFrame {
 };
 std::deque<AudioFrame> audioQueue;
 std::uint64_t audioSequence = 1;
+std::chrono::steady_clock::time_point lastAudioPushLog{};
+std::chrono::steady_clock::time_point lastAudioDeliveryLog{};
 int kAudioSampleRate = 48000;
 int kAudioChannels = 2;
 int kAudioFrameSamples = 960;
@@ -278,6 +281,11 @@ private:
     if (!isCurrentlyAwaitingData()) return;
     std::vector<unsigned char> frame;
     std::chrono::steady_clock::time_point capturedAt{};
+    std::size_t queuedFrames = 0;
+    double oldestAgeMs = 0.0;
+    double selectedAgeMs = 0.0;
+    double anchorAgeMs = 0.0;
+    bool selectedStart = false;
     {
       std::lock_guard<std::mutex> lock(audioQueueMutex);
       if (!audioQueue.empty()) {
@@ -297,6 +305,10 @@ private:
           }
           cursor_ = start->seq;
           cursorSet_ = true;
+          selectedStart = true;
+          const auto now = std::chrono::steady_clock::now();
+          anchorAgeMs = std::chrono::duration<double, std::milli>(now - sessionStart_->captureTime).count();
+          selectedAgeMs = std::chrono::duration<double, std::milli>(now - start->capturedAt).count();
         }
         auto it = std::find_if(audioQueue.begin(), audioQueue.end(),
           [this](const AudioFrame& item) { return item.seq >= cursor_; });
@@ -308,6 +320,11 @@ private:
         frame = it->data;
         capturedAt = it->capturedAt;
         cursor_ = it->seq + 1;
+        queuedFrames = audioQueue.size();
+        if (!audioQueue.empty()) {
+          oldestAgeMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - audioQueue.front().capturedAt).count();
+        }
       }
     }
     if (frame.empty()) {
@@ -318,6 +335,20 @@ private:
     std::memcpy(fTo, frame.data(), size);
     fFrameSize = static_cast<unsigned>(size);
     fNumTruncatedBytes = static_cast<unsigned>(frame.size() - size);
+    const auto deliveryNow = std::chrono::steady_clock::now();
+    const double packetAgeMs = std::chrono::duration<double, std::milli>(deliveryNow - capturedAt).count();
+    if (selectedStart) {
+      std::fprintf(stderr,
+        "PetCam audio sync: session anchor age=%.1fms, selected first packet age=%.1fms\\n",
+        anchorAgeMs, selectedAgeMs);
+    }
+    if (lastAudioDeliveryLog == std::chrono::steady_clock::time_point{} ||
+        deliveryNow - lastAudioDeliveryLog >= std::chrono::seconds(1)) {
+      lastAudioDeliveryLog = deliveryNow;
+      std::fprintf(stderr,
+        "PetCam audio delivery: packet age=%.1fms, queue depth=%zu, oldest queued age=%.1fms\\n",
+        packetAgeMs, queuedFrames, oldestAgeMs);
+    }
     fPresentationTime = presentationClock.toTimeval(capturedAt);
     fDurationInMicroseconds = static_cast<unsigned>(kAudioPacketMs10 * 100);
     FramedSource::afterGetting(this);
@@ -514,6 +545,20 @@ int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
   audioQueue.push_back(AudioFrame{audioSequence++, std::move(packet), capturedAt});
   const auto maxFrames = static_cast<std::size_t>(20000 / kAudioPacketMs10);
   while (audioQueue.size() > maxFrames) audioQueue.pop_front();
+  const auto now = std::chrono::steady_clock::now();
+  if (lastAudioPushLog == std::chrono::steady_clock::time_point{} ||
+      now - lastAudioPushLog >= std::chrono::seconds(1)) {
+    lastAudioPushLog = now;
+    const double oldestAgeMs = audioQueue.empty() ? 0.0 :
+      std::chrono::duration<double, std::milli>(now - audioQueue.front().capturedAt).count();
+    const double newestAgeMs = audioQueue.empty() ? 0.0 :
+      std::chrono::duration<double, std::milli>(now - audioQueue.back().capturedAt).count();
+    std::fprintf(stderr,
+      "PetCam audio capture queue: depth=%zu/%zu frames (%.1fms configured capacity), "
+      "oldest age=%.1fms, newest age=%.1fms\\n",
+      audioQueue.size(), maxFrames, static_cast<double>(maxFrames * kAudioPacketMs10),
+      oldestAgeMs, newestAgeMs);
+  }
   return 0;
 }
 void petcam_clear_audio() {
