@@ -9,14 +9,16 @@
 int main() {
   constexpr std::array<int, 5> kRates{8000, 12000, 16000, 24000, 48000};
   constexpr std::array<int, 2> kChannelCounts{1, 2};
-  constexpr std::array<int, 6> kPacketDurationsMs{3, 5, 10, 20, 40, 60};
+  // Opus durations in tenths of a millisecond, including the 2.5 ms frame.
+  constexpr std::array<int, 6> kPacketDurationsMs10{25, 50, 100, 200, 400, 600};
   constexpr int kRtpClockRate = 48000;
 
   for (const int rate : kRates) {
     for (const int channels : kChannelCounts) {
-      for (const int durationMs : kPacketDurationsMs) {
-        const int frameSamples = rate * durationMs / 1000;
-        const int rtpSamples = kRtpClockRate * durationMs / 1000;
+      for (const int durationMs10 : kPacketDurationsMs10) {
+        assert(rate * durationMs10 % 10000 == 0);
+        const int frameSamples = rate * durationMs10 / 10000;
+        const int rtpSamples = kRtpClockRate * durationMs10 / 10000;
         int error = OPUS_OK;
         OpusEncoder* encoder = opus_encoder_create(
           rate, channels, OPUS_APPLICATION_AUDIO, &error
