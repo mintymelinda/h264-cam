@@ -8,6 +8,7 @@ import json
 import logging
 from collections import Counter
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -141,20 +142,84 @@ def build_capture_command(status: dict) -> list[str]:
 
 
 
+class PcmAudioFramer:
+    """Turn arbitrary ALSA pipe reads into exact 20 ms mono PCM frames."""
+
+    FRAME_BYTES = 320  # 160 S16_LE samples at 8 kHz.
+
+    def __init__(self) -> None:
+        self._pending = bytearray()
+
+    def feed(self, chunk: bytes) -> list[bytes]:
+        if not chunk:
+            return []
+        self._pending.extend(chunk)
+        frames = []
+        while len(self._pending) >= self.FRAME_BYTES:
+            frames.append(bytes(self._pending[:self.FRAME_BYTES]))
+            del self._pending[:self.FRAME_BYTES]
+        return frames
+
+
+def _detect_alsa_capture_device() -> str:
+    """Prefer the Kiyo mic; otherwise use the first ALSA capture device."""
+    try:
+        result = subprocess.run(
+            ["arecord", "-l"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise Live555Error(f"Unable to discover ALSA capture devices: {error}") from error
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise Live555Error(
+            "Unable to list ALSA capture devices."
+            + (f" {detail}" if detail else "")
+        )
+
+    devices = []
+    pattern = re.compile(r"^\\s*card\\s+(\\d+):.*?,\\s*device\\s+(\\d+):")
+    for line in result.stdout.splitlines():
+        match = pattern.search(line)
+        if match:
+            devices.append((int(match.group(1)), int(match.group(2)), line))
+
+    if not devices:
+        raise Live555Error(
+            "No ALSA capture device was found. Connect the Razer Kiyo or set "
+            "PETCAM_AUDIO_DEVICE to an ALSA capture device."
+        )
+
+    selected = next(
+        (item for item in devices if "kiyo" in item[2].lower() or "razer" in item[2].lower()),
+        devices[0],
+    )
+    return f"plughw:{selected[0]},{selected[1]}"
+
+
 def build_audio_capture_command() -> list[str] | None:
     """Capture mono 8 kHz signed PCM for the Live555 PCMU audio track."""
     if os.environ.get("PETCAM_AUDIO", "1").strip().lower() in {"0", "false", "no", "off"}:
         return None
     if not shutil.which("arecord"):
         raise Live555Error("arecord is missing; install alsa-utils to enable microphone audio.")
-    device = os.environ.get("PETCAM_AUDIO_DEVICE", "default").strip()
-    if not device or any(char in device for char in "\r\n"):
+
+    device = os.environ.get("PETCAM_AUDIO_DEVICE", "auto").strip()
+    if not device or any(char in device for char in "\\r\\n"):
         raise Live555Error("PETCAM_AUDIO_DEVICE must be a non-empty ALSA capture device name.")
+    if device.lower() == "auto":
+        device = _detect_alsa_capture_device()
+
     return [
         "arecord", "--quiet", "--device", device,
         "--format", "S16_LE", "--rate", "8000", "--channels", "1",
         "--file-type", "raw", "--period-size", "160", "--buffer-size", "640",
     ]
+
 
 class Live555Server:
     """ctypes binding to the small ARMHF Live555 server library."""
@@ -174,7 +239,8 @@ class Live555Server:
         self.library.petcam_push_nal.argtypes = [
             ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t, ctypes.c_int
         ]
-        self.library.petcam_push_nal.restype = ctypes.c_int        self.library.petcam_push_audio_pcm.argtypes = [
+        self.library.petcam_push_nal.restype = ctypes.c_int
+        self.library.petcam_push_audio_pcm.argtypes = [
             ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t
         ]
         self.library.petcam_push_audio_pcm.restype = ctypes.c_int
@@ -338,6 +404,7 @@ def run_server(camera_status: dict) -> int:
     stop_reader = threading.Event()
     first_idr = threading.Event()
     reader_error = {"message": ""}
+    audio_reader_error = {"message": ""}
     publisher = H264Publisher(server)
     framer_mode = os.environ.get("PETCAM_LIVE555_FRAMER", "stream").strip().lower()
     if framer_mode not in {"stream", "discrete"}:
@@ -370,18 +437,19 @@ def run_server(camera_status: dict) -> int:
 
     def read_audio_capture() -> None:
         assert audio_capture is not None and audio_capture.stdout is not None
-        pending = bytearray()
+        framer = PcmAudioFramer()
         try:
             while not stop_reader.is_set():
-                chunk = audio_capture.stdout.read(320 - len(pending))
+                chunk = audio_capture.stdout.read(PcmAudioFramer.FRAME_BYTES)
                 if not chunk:
+                    if not stop_reader.is_set():
+                        audio_reader_error["message"] = "ALSA microphone capture stopped unexpectedly."
                     break
-                pending.extend(chunk)
-                if len(pending) == 320:
-                    server.push_audio_pcm(bytes(pending))
-                    pending.clear()
-        except (OSError, Live555Error):
+                for frame in framer.feed(chunk):
+                    server.push_audio_pcm(frame)
+        except (OSError, Live555Error) as error:
             if not stop_reader.is_set():
+                audio_reader_error["message"] = str(error)
                 logging.exception("Microphone audio capture failed")
 
     logging.info("Using Live555 H.264 framer mode: %s", framer_mode)
@@ -398,23 +466,17 @@ def run_server(camera_status: dict) -> int:
             try:
                 audio_capture = subprocess.Popen(
                     audio_command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL, bufsize=0,
+                    stderr=subprocess.PIPE, bufsize=0,
                 )
-                if audio_capture.stdout is None:
-                    raise Live555Error("Unable to open the microphone capture pipe.")
-                audio_reader = threading.Thread(
-                    target=read_audio_capture, name="petcam-audio-capture", daemon=True
-                )
-                audio_reader.start()
-                logging.info(
-                    "Microphone audio enabled from ALSA device %s",
-                    os.environ.get("PETCAM_AUDIO_DEVICE", "default"),
-                )
-            except (OSError, Live555Error) as error:
-                logging.warning("Microphone audio is unavailable; continuing with video only: %s", error)
-                if audio_capture is not None:
-                    audio_capture.terminate()
-                    audio_capture = None
+            except OSError as error:
+                raise Live555Error(f"Unable to start ALSA microphone capture: {error}") from error
+            if audio_capture.stdout is None:
+                raise Live555Error("Unable to open the microphone capture pipe.")
+            audio_reader = threading.Thread(
+                target=read_audio_capture, name="petcam-audio-capture", daemon=True
+            )
+            audio_reader.start()
+            logging.info("Microphone audio enabled with command: %s", " ".join(audio_command))
         else:
             logging.info("Microphone audio is disabled by PETCAM_AUDIO.")
         capture = subprocess.Popen(
@@ -429,6 +491,16 @@ def run_server(camera_status: dict) -> int:
                 raise Live555Error(f"Camera capture exited with status {capture.returncode}.")
             if reader_error["message"]:
                 raise Live555Error(reader_error["message"])
+            if audio_reader_error["message"]:
+                raise Live555Error(audio_reader_error["message"])
+            if audio_capture is not None and audio_capture.poll() is not None:
+                detail = ""
+                if audio_capture.stderr is not None:
+                    detail = audio_capture.stderr.read().decode("utf-8", "replace").strip()
+                message = f"ALSA microphone capture exited with status {audio_capture.returncode}."
+                if detail:
+                    message += f" {detail[-1000:]}"
+                raise Live555Error(message)
             now = time.monotonic()
             elapsed = max(now - previous_sample_at, 0.001)
             publisher_counts = publisher.counter_snapshot()
@@ -475,6 +547,8 @@ def run_server(camera_status: dict) -> int:
                     audio_capture.wait(timeout=2)
             if audio_capture.stdout is not None:
                 audio_capture.stdout.close()
+            if audio_capture.stderr is not None:
+                audio_capture.stderr.close()
         if audio_reader is not None and audio_reader.is_alive():
             audio_reader.join(timeout=2)
         if capture is not None:
