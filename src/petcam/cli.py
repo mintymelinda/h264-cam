@@ -416,7 +416,7 @@ def _audio_capture_mode_label(audio: dict) -> str:
 def _pcm_framing_label(audio: dict) -> str:
     """Show uncompressed PCM samples and L16 RTP packet duration."""
     sample_rate = int(audio.get("sample_rate", 48000))
-    packet_ms = float(audio.get("packet_ms", 20))
+    packet_ms = float(audio.get("packet_ms", 5))
     pcm_samples = round(sample_rate * packet_ms / 1000)
     rtp_ticks = round(sample_rate * packet_ms / 1000)
     return (
