@@ -25,7 +25,7 @@ gi.require_version("Gst", "1.0")
 gi.require_version("GstRtspServer", "1.0")
 from gi.repository import Gst, GstRtspServer
 Gst.init(None)
-required = ("appsrc", "h264parse", "queue", "rtph264pay")
+required = ("appsrc", "h264parse", "queue", "rtpbin", "rtph264pay")
 raise SystemExit(0 if GstRtspServer.RTSPServer is not None and all(
     Gst.ElementFactory.find(name) is not None for name in required
 ) else 1)
@@ -124,6 +124,7 @@ parser_plugin="$plugin_root/usr/lib/$multiarch/gstreamer-1.0/libgstvideoparsersb
 codec_library="$(find "$codec_root/usr/lib/$multiarch" -maxdepth 1 -type f \
   -name 'libgstcodecparsers-1.0.so.0.*' -print -quit)"
 rtp_plugin="$rtp_plugin_root/usr/lib/$multiarch/gstreamer-1.0/libgstrtp.so"
+rtp_manager_plugin="$rtp_plugin_root/usr/lib/$multiarch/gstreamer-1.0/libgstrtpmanager.so"
 app_plugin="$base_plugin_root/usr/lib/$multiarch/gstreamer-1.0/libgstapp.so"
 base_typelib_dir="$base_typelib_root/usr/lib/$multiarch/girepository-1.0"
 
@@ -132,6 +133,7 @@ base_typelib_dir="$base_typelib_root/usr/lib/$multiarch/girepository-1.0"
 [[ -s "$parser_plugin" ]] || fail "The H.264 video parser plugin is missing."
 [[ -s "$codec_library" ]] || fail "The codec-parser shared library is missing."
 [[ -s "$rtp_plugin" ]] || fail "The RTP payloader plugin is missing."
+[[ -s "$rtp_manager_plugin" ]] || fail "The GStreamer RTP session manager plugin is missing."
 [[ -s "$app_plugin" ]] || fail "The GStreamer appsrc plugin is missing."
 [[ -d "$base_typelib_dir" ]] || fail "The GStreamer base typelibs are missing."
 
@@ -195,6 +197,7 @@ install -d -m 0755 \
   "$rtp_root/usr/lib/$multiarch/gstreamer-1.0" \
   "$rtp_root/usr/lib/$multiarch"
 install -m 0644 "$rtp_plugin" "$rtp_root/usr/lib/$multiarch/gstreamer-1.0/libgstrtp.so"
+install -m 0644 "$rtp_manager_plugin" "$rtp_root/usr/lib/$multiarch/gstreamer-1.0/libgstrtpmanager.so"
 cat > "$rtp_root/DEBIAN/control" <<EOF
 Package: petcam-gstreamer-rtp
 Version: $rtp_plugin_version
@@ -219,6 +222,10 @@ fi
 if ldd "$rtp_plugin" 2>&1 | grep -Fq "not found"; then
   ldd "$rtp_plugin" >&2
   fail "The RTP plugin has unresolved dependencies."
+fi
+if ldd "$rtp_manager_plugin" 2>&1 | grep -Fq "not found"; then
+  ldd "$rtp_manager_plugin" >&2
+  fail "The RTP session manager plugin has unresolved dependencies."
 fi
 if LD_LIBRARY_PATH="$codec_root/usr/lib/$multiarch" ldd "$parser_plugin" 2>&1 | grep -Fq "not found"; then
   LD_LIBRARY_PATH="$codec_root/usr/lib/$multiarch" ldd "$parser_plugin" >&2
