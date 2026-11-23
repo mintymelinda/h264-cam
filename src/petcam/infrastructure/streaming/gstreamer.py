@@ -199,6 +199,9 @@ class GStreamerRtspServer:
         if self._source_id:
             self.GLib.source_remove(self._source_id)
             self._source_id = 0
+        self.factory = None
+        self.server = None
+        self._context = None
 
 
 class GStreamerSession:
