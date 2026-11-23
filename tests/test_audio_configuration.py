@@ -33,30 +33,35 @@ class AudioConfigurationTests(unittest.TestCase):
         self.assertEqual(normalized["audio"]["capture_gain_percent"], 75)
         self.assertEqual(normalized["audio"]["device"], "plughw:1,0")
 
-    def test_rejects_non_l16_packet_duration(self) -> None:
-        with self.assertRaises(ConfigurationError):
-            validate_config(self.base_config({"packet_ms": 20}))
+    def test_validates_opus_audio_configuration(self) -> None:
+        normalized = validate_config(self.base_config({"output_codec": "OPUS"}))
+        self.assertEqual(normalized["audio"]["output_codec"], "OPUS")
+        self.assertEqual(normalized["audio"]["packet_ms"], 20)
 
-    def test_rejects_opus_codec(self) -> None:
+    def test_rejects_unsupported_opus_packet_duration(self) -> None:
         with self.assertRaises(ConfigurationError):
-            validate_config(self.base_config({"output_codec": "OPUS"}))
+            validate_config(self.base_config({"output_codec": "OPUS", "packet_ms": 5}))
+
+    def test_rejects_unknown_codec(self) -> None:
+        with self.assertRaises(ConfigurationError):
+            validate_config(self.base_config({"output_codec": "AAC"}))
 
     def test_zero_capture_gain_is_valid(self) -> None:
         normalized = validate_config(self.base_config({"capture_gain_percent": 0}))
         self.assertEqual(normalized["audio"]["capture_gain_percent"], 0)
 
-    def test_defaults_to_l16_and_full_capture_gain(self) -> None:
+    def test_defaults_to_opus_and_full_capture_gain(self) -> None:
         normalized = validate_config(self.base_config({}))
-        self.assertEqual(normalized["audio"]["output_codec"], "L16")
+        self.assertEqual(normalized["audio"]["output_codec"], "OPUS")
         self.assertEqual(normalized["audio"]["capture_gain_percent"], 100)
-        self.assertEqual(normalized["audio"]["packet_ms"], 5)
+        self.assertEqual(normalized["audio"]["packet_ms"], 20)
 
     def test_rejects_capture_gain_outside_percentage_range(self) -> None:
         for gain in (-1, 101):
             with self.subTest(gain=gain), self.assertRaises(ConfigurationError):
                 validate_config(self.base_config({"capture_gain_percent": gain}))
 
-    def test_interactive_audio_setup_offers_l16_and_zero_gain(self) -> None:
+    def test_interactive_audio_setup_offers_both_codecs_and_zero_gain(self) -> None:
         menu_calls = []
 
         def choose(_stdscr, title, _subtitle, items):
@@ -73,9 +78,9 @@ class AudioConfigurationTests(unittest.TestCase):
 
         codec_menu = next(items for title, items in menu_calls if "output codec" in title.lower())
         gain_menu = next(items for title, items in menu_calls if "capture gain" in title.lower())
-        self.assertEqual(codec_menu, ["PCM (L16)"])
+        self.assertEqual(codec_menu, ["Opus (compressed)", "PCM (L16, uncompressed)"])
         self.assertIn("0%", gain_menu)
-        self.assertEqual(audio["output_codec"], "L16")
+        self.assertEqual(audio["output_codec"], "OPUS")
         self.assertEqual(audio["capture_gain_percent"], 75)
 
     def test_pcm_framer_uses_selected_rate_channels_and_packet_duration(self) -> None:
