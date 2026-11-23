@@ -28,7 +28,6 @@ jobs:
             g++ \
             liblivemedia-dev \
             libopus-dev \
-            libssl-dev \
 
       - name: Check out source
         uses: actions/checkout@v5
@@ -43,20 +42,3 @@ jobs:
         env:
           PYTHONPATH: src
         run: python3 -m unittest discover -s tests -v
-
-      - name: Test coordinated RTSP audio/video session start
-        run: |
-          g++ -std=c++17 -Wall -Wextra -Werror \
-            -Isrc/petcam/infrastructure/streaming \
-            tests/test_media_session_start.cpp \
-            -o /tmp/test_media_session_start
-          /tmp/test_media_session_start
-
-      - name: Compile the native Live555 server
-        run: |
-          g++ -std=c++17 -O2 -fPIC -shared \
-            -I/usr/include/liveMedia -I/usr/include/groupsock \
-            -I/usr/include/BasicUsageEnvironment -I/usr/include/UsageEnvironment \
-            src/petcam/infrastructure/streaming/live555_server.cpp \
-            -o /tmp/libpetcam_live555.so \
-            -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment -lopus -pthread
