@@ -54,33 +54,29 @@ def validate_config(value: dict[str, Any]) -> dict[str, Any]:
     try:
         sample_rate = int(audio.get("sample_rate", 48000))
         channels = int(audio.get("channels", 2))
-        bitrate = int(audio.get("bitrate", 128000))
         packet_ms = float(audio.get("packet_ms", 20))
         capture_gain_percent = int(audio.get("capture_gain_percent", 100))
     except (TypeError, ValueError) as error:
         raise ConfigurationError("Audio settings must be numeric.") from error
     if sample_rate not in {8000, 12000, 16000, 24000, 48000}:
-        raise ConfigurationError("Opus input sample rate must be 8000, 12000, 16000, 24000, or 48000 Hz.")
+        raise ConfigurationError("PCM sample rate must be 8000, 12000, 16000, 24000, or 48000 Hz.")
     if channels not in {1, 2}:
-        raise ConfigurationError("Opus supports mono or stereo input.")
-    if not 6000 <= bitrate <= 510000:
-        raise ConfigurationError("Opus bitrate must be between 6000 and 510000 bit/s.")
-    if packet_ms not in {2.5, 5, 10, 20, 40, 60}:
-        raise ConfigurationError("Opus packet duration must be 2.5, 5, 10, 20, 40, or 60 ms.")
+        raise ConfigurationError("L16 PCM supports mono or stereo input.")
+    if packet_ms != 5:
+        raise ConfigurationError("L16 RTP packet duration is fixed at 5 ms to fit stereo payloads within a typical MTU.")
     if not 0 <= capture_gain_percent <= 100:
         raise ConfigurationError("Microphone capture gain must be between 0 and 100 percent.")
     normalized["audio"] = {
         "sample_rate": sample_rate,
         "channels": channels,
         "input_format": str(audio.get("input_format", "S16_LE")),
-        "output_codec": str(audio.get("output_codec", "OPUS")).upper(),
-        "bitrate": bitrate,
+        "output_codec": str(audio.get("output_codec", "L16")).upper(),
         "packet_ms": packet_ms,
         "capture_gain_percent": capture_gain_percent,
         "device": str(audio.get("device", "auto")),
     }
     if normalized["audio"]["input_format"] != "S16_LE":
         raise ConfigurationError("Only S16_LE PCM input is currently supported.")
-    if normalized["audio"]["output_codec"] != "OPUS":
-        raise ConfigurationError("Only the Opus output codec is currently supported.")
+    if normalized["audio"]["output_codec"] != "L16":
+        raise ConfigurationError("Only the uncompressed L16 output codec is currently supported.")
     return normalized
