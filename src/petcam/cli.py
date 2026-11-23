@@ -285,9 +285,18 @@ def configure_audio(stdscr) -> dict:
         [str(duration) + " ms" for duration in durations])
     if index is None:
         raise KeyboardInterrupt
+    packet_ms = durations[index]
+    gain_options = [75, 100, 50, 25]
+    index = select_menu(stdscr, "Step 10 · Microphone capture gain",
+        "Sets the ALSA microphone capture level. Start at 75%; reduce it if audio clips.",
+        [str(gain) + "%" for gain in gain_options])
+    if index is None:
+        raise KeyboardInterrupt
+    capture_gain_percent = gain_options[index]
     return {"sample_rate": sample_rate, "channels": channels,
             "input_format": input_format, "output_codec": output_codec,
-            "bitrate": bitrate, "packet_ms": durations[index],
+            "bitrate": bitrate, "packet_ms": packet_ms,
+            "capture_gain_percent": capture_gain_percent,
             "device": capabilities.get("device", "auto")}
 
 
@@ -373,11 +382,12 @@ def guided_configuration(stdscr) -> dict:
                 continue
             confirm_index = select_menu(
                 stdscr,
-                "Step 10 · Confirm stream",
+                "Step 11 · Confirm stream",
                 f"{_camera_label(source, camera)}\n{mode['resolution']} at {mode['fps']:g} FPS · H.264\n"
                 f"Audio: {audio['sample_rate']} Hz, {audio['channels']} ch, "
                 f"{audio['input_format']} -> {audio['output_codec']} "
-                f"{audio['bitrate'] // 1000} kbit/s, {audio['packet_ms']:g} ms",
+                f"{audio['bitrate'] // 1000} kbit/s, {audio['packet_ms']:g} ms\n"
+                f"Microphone capture gain: {audio['capture_gain_percent']}%",
                 ["Activate RTSP stream", "Return to capture mode selection"],
             )
             if confirm_index == 0:
