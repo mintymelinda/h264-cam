@@ -507,7 +507,7 @@ def run_stream(config: dict, stdscr) -> int:
 
         log_handle = STREAM_LOG.open("a", encoding="utf-8", buffering=1)
         os.chmod(STREAM_LOG, 0o600)
-        log_handle.write(f"\\n--- PetCam RTSP process started {time.strftime('%Y-%m-%d %H:%M:%S')} ---\\n")
+        log_handle.write(f"\n--- PetCam RTSP process started {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
         streaming_process = subprocess.Popen(
             [sys.executable, "-m", "petcam.infrastructure.streaming.live555"],
             env=environment, stdin=subprocess.DEVNULL,
