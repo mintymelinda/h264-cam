@@ -46,7 +46,7 @@ class GStreamerRtspTests(unittest.TestCase):
                 self.assertEqual(server.client_count, 1)
                 self.assertEqual(
                     server.factory.get_protocols(),
-                    server.GstRtspServer.RTSPLowerTrans.TCP,
+                    server.GstRtsp.RTSPLowerTrans.TCP,
                 )
         finally:
             server.stop()
