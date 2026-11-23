@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 #include "nal_chunk.hpp"
+#include "pcmu.hpp"
 
 namespace {
 constexpr std::size_t kMaxNal = 16U * 1024U * 1024U;
@@ -374,15 +375,9 @@ int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
   std::vector<unsigned char> encoded;
   encoded.reserve(160);
   for (std::size_t i = 0; i < size; i += 2) {
-    const int sample = static_cast<int>(static_cast<std::int16_t>(
-      static_cast<unsigned>(data[i]) | (static_cast<unsigned>(data[i + 1]) << 8)));
-    const int sign = sample < 0 ? 0x80 : 0x00;
-    int magnitude = sample < 0 ? -sample : sample;
-    magnitude = std::min(magnitude, 32635) + 0x84;
-    int exponent = 7;
-    for (int mask = 0x4000; exponent > 0 && (magnitude & mask) == 0; mask >>= 1) --exponent;
-    const int mantissa = (magnitude >> (exponent + 3)) & 0x0F;
-    encoded.push_back(static_cast<unsigned char>(~(sign | (exponent << 4) | mantissa)));
+    const auto sample = static_cast<std::int16_t>(
+      static_cast<unsigned>(data[i]) | (static_cast<unsigned>(data[i + 1]) << 8));
+    encoded.push_back(petcam::encodePcmuSample(sample));
   }
   std::lock_guard<std::mutex> lock(audioQueueMutex);
   audioQueue.push_back(AudioFrame{audioSequence++, std::move(encoded)});
