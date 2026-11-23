@@ -235,13 +235,13 @@ def build_audio_capture_command(camera_status: dict | None = None) -> list[str] 
     if not shutil.which("arecord"):
         raise Live555Error("arecord is missing; install alsa-utils to enable microphone audio.")
 
-    device = os.environ.get("PETCAM_AUDIO_DEVICE", "auto").strip()
+    audio = (camera_status or {}).get("audio", {})
+    device = str(audio.get("device") or os.environ.get("PETCAM_AUDIO_DEVICE", "auto")).strip()
     if not device or any(char in device for char in "\r\n"):
         raise Live555Error("PETCAM_AUDIO_DEVICE must be a non-empty ALSA capture device name.")
     if device.lower() == "auto":
         device = _detect_alsa_capture_device()
 
-    audio = (camera_status or {}).get("audio", {})
     rate = int(audio.get("sample_rate", 48000))
     channels = int(audio.get("channels", 2))
     packet_ms = float(audio.get("packet_ms", 20))
