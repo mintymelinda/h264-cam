@@ -28,6 +28,7 @@ from .infrastructure.system.hostname import advertised_hostname
 RUN_DIR = Path(os.environ.get("PETCAM_RUN", f"/tmp/petcam-{os.getuid()}"))
 CAMERA_STATUS = RUN_DIR / "camera-status.json"
 STREAM_STATUS = RUN_DIR / "stream-status.json"
+STREAM_LOG = RUN_DIR / "stream.log"
 RTSP_PORT = 8554
 RTSP_PATH = "/petcam"
 HOTPLUG = object()
@@ -317,6 +318,45 @@ def guided_configuration(stdscr) -> dict:
             break
 
 
+def _read_log(path: Path = STREAM_LOG) -> list[str]:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+
+def _show_log_viewer(stdscr, path: Path = STREAM_LOG) -> None:
+    """Display a live, scrollable tail of the RTSP process log."""
+    offset = 0
+    stdscr.timeout(250)
+    while True:
+        lines = _read_log(path)
+        height, width = stdscr.getmaxyx()
+        visible = max(1, height - 4)
+        maximum = max(0, len(lines) - visible)
+        offset = min(max(offset, 0), maximum)
+        stdscr.erase()
+        stdscr.addnstr(0, 0, "PetCam · RTSP log", max(1, width - 1), curses.A_BOLD)
+        stdscr.addnstr(1, 0, f"{len(lines)} lines · showing {offset + 1}-{min(offset + visible, len(lines))}", max(1, width - 1), curses.A_DIM)
+        for row, line in enumerate(lines[offset:offset + visible], start=2):
+            stdscr.addnstr(row, 0, line, max(1, width - 1))
+        stdscr.addnstr(max(0, height - 1), 0, "↑/↓ or j/k scroll · g latest · Esc/l return", max(1, width - 1), curses.A_DIM)
+        stdscr.refresh()
+        key = stdscr.getch()
+        if key in (27, ord("l"), ord("L"), ord("q"), ord("Q")):
+            return
+        if key in (curses.KEY_UP, ord("k")):
+            offset = max(0, offset - 1)
+        elif key in (curses.KEY_DOWN, ord("j")):
+            offset = min(maximum, offset + 1)
+        elif key in (curses.KEY_PPAGE,):
+            offset = max(0, offset - visible)
+        elif key in (curses.KEY_NPAGE,):
+            offset = min(maximum, offset + visible)
+        elif key in (ord("g"), ord("G")):
+            offset = maximum
+
+
 def _read_status() -> dict:
     try:
         payload = json.loads(STREAM_STATUS.read_text(encoding="utf-8"))
@@ -344,6 +384,7 @@ def run_stream(config: dict, stdscr) -> int:
     environment = os.environ.copy()
     environment["PETCAM_RUN"] = str(RUN_DIR)
     streaming_process = None
+    log_handle = None
     camera_marker_owned = False
 
     try:
@@ -370,10 +411,13 @@ def run_stream(config: dict, stdscr) -> int:
         os.replace(temporary, CAMERA_STATUS)
         camera_marker_owned = True
 
+        log_handle = STREAM_LOG.open("a", encoding="utf-8", buffering=1)
+        os.chmod(STREAM_LOG, 0o600)
+        log_handle.write(f"\\n--- PetCam RTSP process started {time.strftime('%Y-%m-%d %H:%M:%S')} ---\\n")
         streaming_process = subprocess.Popen(
             [sys.executable, "-m", "petcam.infrastructure.streaming.live555"],
             env=environment, stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=log_handle, stderr=subprocess.STDOUT,
         )
         start_deadline = time.monotonic() + 20
         while time.monotonic() < start_deadline:
@@ -396,6 +440,9 @@ def run_stream(config: dict, stdscr) -> int:
                 raise RuntimeError("The Live555 H.264 RTSP server stopped unexpectedly.")
             status = _read_status()
             resources = metrics.sample()
+            key = -1
+            if key == -2:
+                pass
             height, width = stdscr.getmaxyx()
             stdscr.erase()
             stdscr.addnstr(0, 0, "PetCam · H.264 RTSP", max(1, width - 1), curses.A_BOLD)
@@ -462,13 +509,18 @@ def run_stream(config: dict, stdscr) -> int:
             memory_text = f"{used} / {total} MB" if used is not None and total is not None else "Unavailable"
             stdscr.addnstr(14, 0, f"CPU: {cpu_text}", max(1, width - 1))
             stdscr.addnstr(15, 0, f"Memory: {memory_text}", max(1, width - 1))
-            stdscr.addnstr(max(0, height - 1), 0, "Press q to stop the RTSP stream", max(1, width - 1), curses.A_DIM)
+            stdscr.addnstr(max(0, height - 1), 0, "l: view live log · q: stop RTSP stream", max(1, width - 1), curses.A_DIM)
             stdscr.refresh()
             key = stdscr.getch()
             if key in (ord("q"), ord("Q"), 27):
                 return 0
+            if key in (ord("l"), ord("L")):
+                _show_log_viewer(stdscr)
+                stdscr.timeout(1000)
     finally:
         _terminate(streaming_process)
+        if log_handle is not None:
+            log_handle.close()
         if camera_marker_owned:
             try:
                 marker = json.loads(CAMERA_STATUS.read_text(encoding="utf-8"))
