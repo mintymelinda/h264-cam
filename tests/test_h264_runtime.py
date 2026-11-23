@@ -75,10 +75,10 @@ class CameraModeTests(unittest.TestCase):
 
 class NativeCaptureTests(unittest.TestCase):
     def setUp(self):
-        self.usb = {
-            "native_h264": True, "backend": "usb", "device": "/dev/video0",
+        self.usb = validate_config({
+            "source": "USB", "device": "/dev/video0",
             "resolution": "1920x1080", "fps": 29.97,
-        }
+        })
 
     def test_usb_capture_uses_v4l2_native_h264_stream(self):
         with patch("petcam.infrastructure.camera.capture.shutil.which", return_value="/usr/bin/v4l2-ctl"):
@@ -116,10 +116,10 @@ class NativeCaptureTests(unittest.TestCase):
                 build_capture_command(self.usb)
 
     def test_csi_capture_uses_native_hardware_h264_command(self):
-        csi = {
-            "native_h264": True, "backend": "csi", "camera": 0,
+        csi = validate_config({
+            "source": "CSI", "camera": 0,
             "resolution": "1920x1080", "fps": 30,
-        }
+        })
         with patch("petcam.infrastructure.camera.capture.shutil.which", return_value="/usr/bin/rpicam-vid"), patch(
             "petcam.infrastructure.camera.capture.detect_hardware_h264_encoder",
             return_value={"available": True},
@@ -131,13 +131,14 @@ class NativeCaptureTests(unittest.TestCase):
         self.assertIn("--bitrate", command)
         self.assertEqual(command[command.index("--bitrate") + 1], "10000000")
 
-    def test_non_native_source_is_rejected(self):
-        with self.assertRaises(CaptureError):
-            build_capture_command({**self.usb, "native_h264": False})
+    def test_validated_usb_configuration_reaches_native_capture(self):
+        with patch("petcam.infrastructure.camera.capture.shutil.which", return_value="/usr/bin/v4l2-ctl"):
+            command = build_capture_command(self.usb)
+        self.assertEqual(command[0], "v4l2-ctl")
 
-    def test_invalid_backend_is_rejected(self):
-        with self.assertRaisesRegex(CaptureError, "backend"):
-            build_capture_command({**self.usb, "backend": "network"})
+    def test_unsupported_camera_source_is_rejected(self):
+        with self.assertRaisesRegex(CaptureError, "source"):
+            build_capture_command({**self.usb, "source": "NETWORK"})
 
 
 if __name__ == "__main__":
