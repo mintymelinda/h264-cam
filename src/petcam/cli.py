@@ -421,6 +421,7 @@ def _audio_capture_mode_label(audio: dict) -> str:
     input_format = str(audio.get("input_format", "S16_LE"))
     return f"Audio capture mode: {sample_rate // 1000} kHz · {channel_label} · {input_format}"
 
+
 def _opus_framing_label(audio: dict) -> str:
     """Show PCM frame size and the corresponding Opus RTP-clock duration."""
     sample_rate = int(audio.get("sample_rate", 48000))

@@ -4,7 +4,13 @@ import os
 import unittest
 from unittest.mock import patch
 
-from petcam.cli import _audio_capture_mode_label, _opus_framing_label, camera_modes, inventory_signature, parse_short_config
+from petcam.cli import (
+    _audio_capture_mode_label,
+    _opus_framing_label,
+    camera_modes,
+    inventory_signature,
+    parse_short_config,
+)
 from petcam.configuration import ConfigurationError, validate_config
 from petcam.domain.camera.capabilities import parse_csi_cameras, parse_v4l2_modes
 from petcam.infrastructure.camera.h264 import (
