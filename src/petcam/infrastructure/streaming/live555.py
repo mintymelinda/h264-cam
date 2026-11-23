@@ -140,6 +140,22 @@ def build_capture_command(status: dict) -> list[str]:
     raise Live555Error("Configured camera backend must be usb or csi.")
 
 
+
+def build_audio_capture_command() -> list[str] | None:
+    """Capture mono 8 kHz signed PCM for the Live555 PCMU audio track."""
+    if os.environ.get("PETCAM_AUDIO", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return None
+    if not shutil.which("arecord"):
+        raise Live555Error("arecord is missing; install alsa-utils to enable microphone audio.")
+    device = os.environ.get("PETCAM_AUDIO_DEVICE", "default").strip()
+    if not device or any(char in device for char in "\r\n"):
+        raise Live555Error("PETCAM_AUDIO_DEVICE must be a non-empty ALSA capture device name.")
+    return [
+        "arecord", "--quiet", "--device", device,
+        "--format", "S16_LE", "--rate", "8000", "--channels", "1",
+        "--file-type", "raw", "--period-size", "160", "--buffer-size", "640",
+    ]
+
 class Live555Server:
     """ctypes binding to the small ARMHF Live555 server library."""
 
@@ -158,7 +174,12 @@ class Live555Server:
         self.library.petcam_push_nal.argtypes = [
             ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t, ctypes.c_int
         ]
-        self.library.petcam_push_nal.restype = ctypes.c_int
+        self.library.petcam_push_nal.restype = ctypes.c_int        self.library.petcam_push_audio_pcm.argtypes = [
+            ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t
+        ]
+        self.library.petcam_push_audio_pcm.restype = ctypes.c_int
+        self.library.petcam_clear_audio.argtypes = []
+        self.library.petcam_clear_audio.restype = None
         self.library.petcam_last_error.restype = ctypes.c_char_p
         self.library.petcam_stop.argtypes = []
         self.library.petcam_stop.restype = None
@@ -168,6 +189,16 @@ class Live555Server:
         self.library.petcam_nal_count.restype = ctypes.c_ulonglong
         self.library.petcam_nal_type_count.argtypes = [ctypes.c_uint]
         self.library.petcam_nal_type_count.restype = ctypes.c_ulonglong
+
+    def push_audio_pcm(self, pcm: bytes) -> None:
+        if len(pcm) != 320:
+            raise Live555Error("Microphone PCM frames must contain exactly 320 bytes.")
+        buffer = (ctypes.c_ubyte * len(pcm)).from_buffer_copy(pcm)
+        if self.library.petcam_push_audio_pcm(buffer, len(pcm)) != 0:
+            raise Live555Error("Unable to queue microphone audio.")
+
+    def clear_audio(self) -> None:
+        self.library.petcam_clear_audio()
 
     def start(self, port: int = RTSP_PORT, path: str = RTSP_PATH) -> None:
         if self.library.petcam_start(port, path.encode("ascii")) != 0:
@@ -302,6 +333,8 @@ def run_server(camera_status: dict) -> int:
     server = Live555Server()
     capture = None
     reader = None
+    audio_capture = None
+    audio_reader = None
     stop_reader = threading.Event()
     first_idr = threading.Event()
     reader_error = {"message": ""}
@@ -335,6 +368,19 @@ def run_server(camera_status: dict) -> int:
             reader_error["message"] = str(error)
             logging.exception("H.264 capture/publishing failed")
 
+    def read_audio_capture() -> None:
+        assert audio_capture is not None and audio_capture.stdout is not None
+        try:
+            while not stop_reader.is_set():
+                pcm = audio_capture.stdout.read(320)
+                if not pcm:
+                    break
+                if len(pcm) == 320:
+                    server.push_audio_pcm(pcm)
+        except (OSError, Live555Error):
+            if not stop_reader.is_set():
+                logging.exception("Microphone audio capture failed")
+
     logging.info("Using Live555 H.264 framer mode: %s", framer_mode)
     started_at = time.monotonic()
     previous_capture_count = 0
@@ -343,6 +389,31 @@ def run_server(camera_status: dict) -> int:
     previous_sample_at = started_at
     try:
         server.start()
+        server.clear_audio()
+        audio_command = build_audio_capture_command()
+        if audio_command is not None:
+            try:
+                audio_capture = subprocess.Popen(
+                    audio_command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL, bufsize=0,
+                )
+                if audio_capture.stdout is None:
+                    raise Live555Error("Unable to open the microphone capture pipe.")
+                audio_reader = threading.Thread(
+                    target=read_audio_capture, name="petcam-audio-capture", daemon=True
+                )
+                audio_reader.start()
+                logging.info(
+                    "Microphone audio enabled from ALSA device %s",
+                    os.environ.get("PETCAM_AUDIO_DEVICE", "default"),
+                )
+            except (OSError, Live555Error) as error:
+                logging.warning("Microphone audio is unavailable; continuing with video only: %s", error)
+                if audio_capture is not None:
+                    audio_capture.terminate()
+                    audio_capture = None
+        else:
+            logging.info("Microphone audio is disabled by PETCAM_AUDIO.")
         capture = subprocess.Popen(
             command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, bufsize=0,
@@ -391,6 +462,18 @@ def run_server(camera_status: dict) -> int:
         signal.signal(signal.SIGTERM, previous_sigterm)
         signal.signal(signal.SIGINT, previous_sigint)
         stop_reader.set()
+        if audio_capture is not None:
+            if audio_capture.poll() is None:
+                audio_capture.terminate()
+                try:
+                    audio_capture.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    audio_capture.kill()
+                    audio_capture.wait(timeout=2)
+            if audio_capture.stdout is not None:
+                audio_capture.stdout.close()
+        if audio_reader is not None and audio_reader.is_alive():
+            audio_reader.join(timeout=2)
         if capture is not None:
             if capture.poll() is None:
                 capture.terminate()
