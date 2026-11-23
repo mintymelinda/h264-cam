@@ -51,8 +51,10 @@ class AudioCaptureCommandTests(unittest.TestCase):
 
         self.assertEqual(command[0], "arecord")
         self.assertEqual(command[command.index("--device") + 1], "plughw:2,0")
-        self.assertEqual(command[command.index("--rate") + 1], "8000")
-        self.assertEqual(command[command.index("--channels") + 1], "1")
+        self.assertEqual(command[command.index("--rate") + 1], "48000")
+        self.assertEqual(command[command.index("--channels") + 1], "2")
+        self.assertEqual(command[command.index("--period-size") + 1], "960")
+        self.assertEqual(command[command.index("--buffer-size") + 1], "3840")
         self.assertIn("--file-type", command)
 
     def test_auto_selection_uses_first_capture_device_when_kiyo_name_is_unavailable(self):

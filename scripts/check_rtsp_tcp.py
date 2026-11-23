@@ -120,16 +120,18 @@ class RTSPConnection:
             raise RTSPProbeError("Received an invalid RTP packet.")
         return channel, len(packet)
 
-    def wait_for_audio(self, timeout: float, channel: int = 2) -> tuple[int, int]:
+    def wait_for_audio(
+        self, timeout: float, channel: int = 2, payload_type: int = 96
+    ) -> tuple[int, int]:
         deadline = time.monotonic() + timeout
         try:
             channel, packet = self._read_interleaved_frame(deadline, channel=channel)
         except RTSPProbeError as error:
             raise RTSPProbeError(f"Microphone audio RTP did not arrive: {error}") from error
-        _, timestamp, _, payload_type, payload = self._rtp_payload(packet)
-        if payload_type != 96:
+        _, timestamp, _, received_payload_type, payload = self._rtp_payload(packet)
+        if received_payload_type != payload_type:
             raise RTSPProbeError(
-                f"Expected dynamic RTP payload type 96 (Opus), received {payload_type}."
+                f"Expected dynamic RTP payload type {expected_payload_type} (Opus), received {payload_type}."
             )
         if len(payload) < 2:
             raise RTSPProbeError(
@@ -306,9 +308,13 @@ def probe(
 
         if not control:
             raise RTSPProbeError("DESCRIBE SDP did not advertise a video media control URL.")
-        if require_audio and (not audio_control or opus_payload_type != 96):
+        if require_audio and (
+            not audio_control
+            or opus_payload_type is None
+            or not 96 <= opus_payload_type <= 127
+        ):
             raise RTSPProbeError(
-                "DESCRIBE SDP did not advertise the Opus/48000/2 microphone audio track on payload type 96."
+                "DESCRIBE SDP did not advertise an Opus/48000/2 microphone audio track."
             )
         content_base = describe_headers.get("content-base", url.rstrip("/") + "/")
         if not content_base.endswith("/"):
@@ -365,11 +371,11 @@ def probe(
         if expected_nal is not None:
             video_result = connection.wait_for_nal(expected_nal, timeout)
             if require_audio:
-                connection.wait_for_audio(timeout)
+                connection.wait_for_audio(timeout, payload_type=opus_payload_type)
             return video_result
         channel, packet_size = connection.wait_for_rtp(timeout)
         if require_audio:
-            connection.wait_for_audio(timeout, channel=2)
+            connection.wait_for_audio(timeout, channel=2, payload_type=opus_payload_type)
         return 1, packet_size, channel
     finally:
         connection.close()
@@ -411,10 +417,8 @@ def probe_audio(url: str, timeout: float = 5.0) -> tuple[int, int]:
                 ):
                     opus_payload_type = int(payload_field)
 
-        if not audio_control or opus_payload_type != 96:
-            raise RTSPProbeError(
-                "DESCRIBE SDP did not advertise the Opus/48000/2 microphone audio track on payload type 96."
-            )
+        if not audio_control or opus_payload_type is None or not 96 <= opus_payload_type <= 127:
+            raise RTSPProbeError("DESCRIBE SDP did not advertise an Opus/48000/2 microphone audio track.")
 
         content_base = describe_headers.get("content-base", url.rstrip("/") + "/")
         if not content_base.endswith("/"):
@@ -444,7 +448,9 @@ def probe_audio(url: str, timeout: float = 5.0) -> tuple[int, int]:
         if status != 200:
             raise RTSPProbeError(f"PLAY failed with RTSP status {status}.")
 
-        return connection.wait_for_audio(timeout, channel=0)
+        return connection.wait_for_audio(
+            timeout, channel=0, payload_type=opus_payload_type
+        )
     finally:
         connection.close()
 

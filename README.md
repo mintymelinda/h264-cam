@@ -2,8 +2,9 @@
 
 H264 Cam serves a camera's native H.264 capture stream over RTSP using Live555. The same
 RTSP session includes a stereo Opus microphone audio track captured through ALSA at
-48 kHz; automatic device selection prefers the Razer Kiyo microphone. PetCam does not decode or transcode
-the video, or provide a web interface, motion processing, timelapse, or Home Assistant
+48 kHz; automatic device selection prefers the Razer Kiyo microphone. PetCam does not
+decode or transcode the video, or provide a web interface, motion processing, timelapse,
+or Home Assistant
 integration.
 
 ## Supported platform

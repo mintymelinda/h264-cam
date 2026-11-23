@@ -45,7 +45,6 @@ constexpr std::size_t kAudioFrameBytes =
   static_cast<std::size_t>(kAudioFrameSamples * kAudioChannels * 2);
 constexpr int kAudioBitrate = 64000;
 constexpr int kAudioComplexity = 1;
-constexpr unsigned char kAudioPayloadType = 96;
 OpusEncoder* audioEncoder = nullptr;
 std::uint64_t sequence = 1;
 std::thread worker;
@@ -276,9 +275,9 @@ protected:
     bitrate = kAudioBitrate / 1000;
     return AudioSource::createNew(envir());
   }
-  RTPSink* createNewRTPSink(Groupsock* groupsock, unsigned char, FramedSource*) override {
-    // Opus uses a dynamic payload type and a fixed 48 kHz RTP clock.
-    return SimpleRTPSink::createNew(envir(), groupsock, kAudioPayloadType,
+  RTPSink* createNewRTPSink(Groupsock* groupsock, unsigned char payload, FramedSource*) override {
+    // Use Live555's allocated dynamic payload type; Opus always uses a 48 kHz RTP clock.
+    return SimpleRTPSink::createNew(envir(), groupsock, payload,
       kAudioSampleRate, "audio", "OPUS", kAudioChannels, False, False);
   }
 private:
