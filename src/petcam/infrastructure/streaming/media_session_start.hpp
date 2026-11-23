@@ -11,6 +11,7 @@ namespace petcam {
 
 struct MediaSessionStart {
   std::chrono::steady_clock::time_point captureTime;
+  bool videoStartReady = false;
 };
 
 // Both RTSP subsessions for one client session share the same live-edge anchor,
