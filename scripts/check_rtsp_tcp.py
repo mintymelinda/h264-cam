@@ -123,7 +123,11 @@ class RTSPConnection:
     def wait_for_audio(self, timeout: float) -> tuple[int, int]:
         deadline = time.monotonic() + timeout
         channel, packet = self._read_interleaved_frame(deadline, channel=2)
-        _, timestamp, _, _payload_type, payload = self._rtp_payload(packet)
+        _, timestamp, _, payload_type, payload = self._rtp_payload(packet)
+        if payload_type != 0:
+            raise RTSPProbeError(
+                f"Expected static RTP payload type 0 (PCMU), received {payload_type}."
+            )
         if len(payload) != 160:
             raise RTSPProbeError(
                 f"Expected a 160-byte 20 ms PCMU payload, received {len(payload)} bytes."
@@ -154,7 +158,7 @@ class RTSPConnection:
         raise RTSPProbeError("Timed out waiting for an interleaved RTP frame.")
 
     @staticmethod
-    def _rtp_payload(packet: bytes) -> tuple[int, int, int, bytes]:
+    def _rtp_payload(packet: bytes) -> tuple[int, int, int, int, bytes]:
         if len(packet) < 12 or packet[0] >> 6 != 2:
             raise RTSPProbeError("Received an invalid RTP packet.")
         padding = bool(packet[0] & 0x20)
@@ -285,7 +289,7 @@ def probe(
 
         if not control:
             raise RTSPProbeError("DESCRIBE SDP did not advertise a video media control URL.")
-        if not audio_control or not audio_codec_found:
+        if require_audio and (not audio_control or not audio_codec_found):
             raise RTSPProbeError("DESCRIBE SDP did not advertise the PCMU/8000 microphone audio track.")
         content_base = describe_headers.get("content-base", url.rstrip("/") + "/")
         if not content_base.endswith("/"):
