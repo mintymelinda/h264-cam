@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from petcam.cli import _audio_capture_mode_label, camera_modes, inventory_signature, parse_short_config
+from petcam.cli import _audio_capture_mode_label, _opus_framing_label, camera_modes, inventory_signature, parse_short_config
 from petcam.configuration import ConfigurationError, validate_config
 from petcam.domain.camera.capabilities import parse_csi_cameras, parse_v4l2_modes
 from petcam.infrastructure.camera.h264 import (
@@ -75,6 +75,20 @@ class AudioCaptureModeDisplayTests(unittest.TestCase):
                 "input_format": "S16_LE",
             }),
             "Audio capture mode: 24 kHz · Stereo · S16_LE",
+        )
+
+
+class OpusFramingDisplayTests(unittest.TestCase):
+    def test_reports_pcm_samples_and_48khz_rtp_ticks_for_non_48khz_capture(self):
+        self.assertEqual(
+            _opus_framing_label({"sample_rate": 24000, "packet_ms": 20}),
+            "Opus packetization: 20 ms · 480 PCM samples/ch · 960 RTP ticks",
+        )
+
+    def test_reports_short_packet_duration(self):
+        self.assertEqual(
+            _opus_framing_label({"sample_rate": 48000, "packet_ms": 2.5}),
+            "Opus packetization: 2.5 ms · 120 PCM samples/ch · 120 RTP ticks",
         )
 
 
