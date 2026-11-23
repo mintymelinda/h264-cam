@@ -32,6 +32,7 @@ int main() {
   );
   assert(packetSize > 0);
   assert(opus_packet_get_nb_samples(packet.data(), packetSize, kRate) == kFrameSamples);
+  assert(opus_packet_get_nb_channels(packet.data()) == kChannels);
 
   OpusDecoder* decoder = opus_decoder_create(kRate, kChannels, &error);
   assert(decoder != nullptr);

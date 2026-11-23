@@ -382,7 +382,8 @@ int petcam_start(unsigned short port, const char* path) {
       return -1;
     }
     if (opus_encoder_ctl(audioEncoder, OPUS_SET_BITRATE(kAudioBitrate)) != OPUS_OK ||
-        opus_encoder_ctl(audioEncoder, OPUS_SET_COMPLEXITY(kAudioComplexity)) != OPUS_OK) {
+        opus_encoder_ctl(audioEncoder, OPUS_SET_COMPLEXITY(kAudioComplexity)) != OPUS_OK ||
+        opus_encoder_ctl(audioEncoder, OPUS_SET_FORCE_CHANNELS(kAudioChannels)) != OPUS_OK) {
       startupMessage = "Unable to configure the Opus encoder.";
       opus_encoder_destroy(audioEncoder);
       audioEncoder = nullptr;
