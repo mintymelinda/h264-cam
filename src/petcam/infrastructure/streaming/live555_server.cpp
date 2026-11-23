@@ -567,7 +567,7 @@ int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
   }
   audioQueue.push_back(AudioFrame{audioSequence++, std::move(packet), capturedAt});
   // Keep audio history bounded to the same three-second recovery window as video.
-  const auto maxFrames = static_cast<std::size_t>(3000 / kAudioPacketMs10);
+  const auto maxFrames = static_cast<std::size_t>(30000 / kAudioPacketMs10);
   while (audioQueue.size() > maxFrames) audioQueue.pop_front();
   const auto now = std::chrono::steady_clock::now();
   if (lastAudioPushLog == std::chrono::steady_clock::time_point{} ||
@@ -580,7 +580,7 @@ int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
     std::fprintf(stderr,
       "PetCam audio capture queue: depth=%zu/%zu frames (%.1fms configured capacity), "
       "oldest age=%.1fms, newest age=%.1fms\\n",
-      audioQueue.size(), maxFrames, static_cast<double>(maxFrames * kAudioPacketMs10),
+      audioQueue.size(), maxFrames, static_cast<double>(maxFrames * kAudioPacketMs10) / 10.0,
       oldestAgeMs, newestAgeMs);
   }
   return 0;
