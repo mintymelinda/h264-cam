@@ -68,7 +68,7 @@ g++ -std=c++17 -O2 -fPIC -shared \
   -I/usr/include/BasicUsageEnvironment -I/usr/include/UsageEnvironment \
   "$APP_ROOT/src/petcam/infrastructure/streaming/live555_server.cpp" \
   -o "$NATIVE_TMP" \
-  -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment -lopus -pthread
+  -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment -pthread
 [[ -s "$NATIVE_TMP" ]] || fail "The Live555 compiler produced an empty shared library."
 ELF_HEADER="$(readelf -h "$NATIVE_TMP")" || fail "The compiled Live555 library is not a valid ELF shared library."
 grep -Eq 'Class:[[:space:]]+ELF32' <<< "$ELF_HEADER" || fail "The Live555 library is not a 32-bit ELF binary."
