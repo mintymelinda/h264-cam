@@ -122,7 +122,10 @@ class RTSPConnection:
 
     def wait_for_audio(self, timeout: float) -> tuple[int, int]:
         deadline = time.monotonic() + timeout
-        channel, packet = self._read_interleaved_frame(deadline, channel=2)
+        try:
+            channel, packet = self._read_interleaved_frame(deadline, channel=2)
+        except RTSPProbeError as error:
+            raise RTSPProbeError(f"Microphone audio RTP did not arrive: {error}") from error
         _, timestamp, _, payload_type, payload = self._rtp_payload(packet)
         if payload_type != 0:
             raise RTSPProbeError(
@@ -155,7 +158,10 @@ class RTSPConnection:
                 self._receive()
             except socket.timeout:
                 break
-        raise RTSPProbeError("Timed out waiting for an interleaved RTP frame.")
+        track = "any" if channel is None else str(channel)
+        raise RTSPProbeError(
+            f"Timed out waiting for an interleaved RTP frame on TCP channel {track}."
+        )
 
     @staticmethod
     def _rtp_payload(packet: bytes) -> tuple[int, int, int, int, bytes]:
@@ -194,7 +200,10 @@ class RTSPConnection:
         fragment_packets = 0
 
         while time.monotonic() < deadline:
-            channel, packet = self._read_interleaved_frame(deadline, channel=0)
+            try:
+                channel, packet = self._read_interleaved_frame(deadline, channel=0)
+            except RTSPProbeError as error:
+                raise RTSPProbeError(f"Video RTP did not arrive: {error}") from error
             sequence, timestamp, marker, _payload_type, payload = self._rtp_payload(packet)
             nal_type = payload[0] & 0x1F
 
