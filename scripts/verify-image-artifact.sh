@@ -71,7 +71,7 @@ grep -Fxq "SOURCE_COMMIT=$EXPECTED_COMMIT" "$ROOTFS/opt/petcam/build-info" || fa
 INSTALLER_SHA256="$(awk -F= '$1 == "INSTALLER_SHA256" { print $2 }' "$ROOTFS/opt/petcam/build-info")"
 [[ "$INSTALLER_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || fail "Image provenance contains an invalid install.sh checksum."
 
-for file in /opt/petcam/source/install.sh /opt/petcam/src/petcam/cli.py /opt/petcam/lib/libpetcam_live555.so /usr/local/bin/petcam; do
+for file in /opt/petcam/source/install.sh /opt/petcam/src/petcam/cli.py /opt/petcam/src/petcam/infrastructure/streaming/gstreamer.py /usr/local/bin/petcam; do
   [[ -s "$ROOTFS$file" ]] || fail "Required installed image file is missing or empty: $file"
 done
 [[ -x "$ROOTFS/usr/local/bin/petcam" ]] || fail "The installed PetCam launcher is not executable."
@@ -103,11 +103,11 @@ run_chroot /bin/bash -e -c '
   test "$VERSION_CODENAME" = trixie
   test -s /opt/petcam/build-info
   test -s /opt/petcam/src/petcam/cli.py
-  test -s /opt/petcam/lib/libpetcam_live555.so
+  test -s /opt/petcam/src/petcam/infrastructure/streaming/gstreamer.py
   test -x /usr/local/bin/petcam
   /usr/local/bin/petcam -h
-  PYTHONPATH=/opt/petcam/src /usr/bin/python3 -c "from petcam.infrastructure.streaming.live555 import Live555Server; Live555Server(); print(\"Live555 native library loaded successfully.\")"
-' || fail "The extracted release image failed ARMHF, CLI, or native Live555 verification."
+  PYTHONPATH=/opt/petcam/src /usr/bin/python3 -c "from petcam.infrastructure.streaming.gstreamer import validate_runtime; validate_runtime(); print(\"GStreamer RTSP runtime loaded successfully.\")"
+' || fail "The extracted release image failed ARMHF, CLI, or GStreamer RTSP verification."
 
 if [[ -n "$CHROOT_EMULATOR" ]]; then
   rm -f "$ROOTFS/usr/bin/qemu-arm-static"
