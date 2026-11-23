@@ -302,7 +302,7 @@ def probe(
                 if (
                     separator
                     and payload_field in audio_payload_types
-                    and codec.strip().upper() == "L16/48000/2"
+                    and codec.strip().upper().startswith("L16/")
                 ):
                     l16_payload_type = int(payload_field)
 
@@ -314,7 +314,7 @@ def probe(
             or not 96 <= l16_payload_type <= 127
         ):
             raise RTSPProbeError(
-                "DESCRIBE SDP did not advertise an L16/48000/2 microphone audio track."
+                "DESCRIBE SDP did not advertise an L16 microphone audio track."
             )
         content_base = describe_headers.get("content-base", url.rstrip("/") + "/")
         if not content_base.endswith("/"):
@@ -413,12 +413,12 @@ def probe_audio(url: str, timeout: float = 5.0) -> tuple[int, int]:
                 if (
                     separator
                     and payload_field in audio_payload_types
-                    and codec.strip().upper() == "L16/48000/2"
+                    and codec.strip().upper().startswith("L16/")
                 ):
                     l16_payload_type = int(payload_field)
 
         if not audio_control or l16_payload_type is None or not 96 <= l16_payload_type <= 127:
-            raise RTSPProbeError("DESCRIBE SDP did not advertise an L16/48000/2 microphone audio track.")
+            raise RTSPProbeError("DESCRIBE SDP did not advertise an L16 microphone audio track.")
 
         content_base = describe_headers.get("content-base", url.rstrip("/") + "/")
         if not content_base.endswith("/"):
@@ -531,7 +531,7 @@ def main() -> int:
         return 1
     if args.self_test:
         print(
-            "RTSP audio self-test PASSED: OPTIONS, DESCRIBE, L16/48000/2 TCP SETUP, "
+            "RTSP audio self-test PASSED: OPTIONS, DESCRIBE, L16 TCP SETUP, "
             f"PLAY, and a live {nal_size}-byte L16 RTP payload (timestamp {timestamp}). "
             "The test uses synthetic audio and does not require a camera or microphone."
         )
