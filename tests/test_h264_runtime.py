@@ -7,17 +7,7 @@ from unittest.mock import patch
 from petcam.cli import camera_modes, inventory_signature, parse_short_config
 from petcam.configuration import ConfigurationError, validate_config
 from petcam.domain.camera.capabilities import parse_csi_cameras, parse_v4l2_modes
-from petcam.infrastructure.camera.h264 import (
-    AnnexBNalFramer,
-    H264AccessUnitFramer,
-    first_mb_in_slice,
-    inspect_h264_access_unit,
-)
-from petcam.infrastructure.streaming.live555 import (
-    H264Publisher,
-    Live555Error,
-    build_capture_command,
-)
+from petcam.infrastructure.camera.capture import CaptureError, build_capture_command
 
 
 class ShortConfigurationTests(unittest.TestCase):
@@ -90,21 +80,17 @@ class NativeCaptureTests(unittest.TestCase):
             "resolution": "1920x1080", "fps": 29.97,
         }
 
-    def test_usb_capture_uses_v4l2_direct_h264_streaming(self):
-        with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/v4l2-ctl"):
+    def test_usb_capture_uses_v4l2_native_h264_stream(self):
+        with patch("petcam.infrastructure.camera.capture.shutil.which", return_value="/usr/bin/v4l2-ctl"):
             command = build_capture_command(self.usb)
         self.assertEqual(command[0], "v4l2-ctl")
         self.assertIn("--stream-mmap=3", command)
         self.assertIn("--stream-to=-", command)
         self.assertIn("--set-fmt-video=width=1920,height=1080,pixelformat=H264", command)
-        self.assertFalse(any(
-            codec in part.lower()
-            for part in command
-            for codec in ("ffmpeg", "gst", "x264", "openh264", "avdec")
-        ))
+        self.assertFalse(any(codec in part.lower() for part in command for codec in ("ffmpeg", "x264", "openh264", "avdec")))
 
-    def test_usb_capture_exposes_experimental_buffer_and_encoder_controls(self):
-        with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/v4l2-ctl"), patch.dict(
+    def test_usb_capture_supports_buffer_and_encoder_controls(self):
+        with patch("petcam.infrastructure.camera.capture.shutil.which", return_value="/usr/bin/v4l2-ctl"), patch.dict(
             os.environ,
             {
                 "PETCAM_V4L2_MMAP_BUFFERS": "8",
@@ -118,173 +104,40 @@ class NativeCaptureTests(unittest.TestCase):
         self.assertIn("--stream-poll", command)
 
     def test_usb_capture_rejects_invalid_experimental_parameters(self):
-        with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/v4l2-ctl"), patch.dict(
+        with patch("petcam.infrastructure.camera.capture.shutil.which", return_value="/usr/bin/v4l2-ctl"), patch.dict(
             os.environ, {"PETCAM_V4L2_MMAP_BUFFERS": "100"}
         ):
-            with self.assertRaisesRegex(Live555Error, "PETCAM_V4L2_MMAP_BUFFERS"):
+            with self.assertRaisesRegex(CaptureError, "PETCAM_V4L2_MMAP_BUFFERS"):
                 build_capture_command(self.usb)
-        with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/v4l2-ctl"), patch.dict(
+        with patch("petcam.infrastructure.camera.capture.shutil.which", return_value="/usr/bin/v4l2-ctl"), patch.dict(
             os.environ, {"PETCAM_V4L2_CONTROLS": "video-gop-size=30"}
         ):
-            with self.assertRaisesRegex(Live555Error, "comma-separated"):
+            with self.assertRaisesRegex(CaptureError, "comma-separated"):
                 build_capture_command(self.usb)
 
-    def test_csi_capture_exposes_experimental_gop_and_bitrate(self):
+    def test_csi_capture_uses_native_hardware_h264_command(self):
         csi = {
             "native_h264": True, "backend": "csi", "camera": 0,
             "resolution": "1920x1080", "fps": 30,
         }
-        with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/rpicam-vid"), patch(
-            "petcam.infrastructure.streaming.live555.detect_hardware_h264_encoder",
+        with patch("petcam.infrastructure.camera.capture.shutil.which", return_value="/usr/bin/rpicam-vid"), patch(
+            "petcam.infrastructure.camera.capture.detect_hardware_h264_encoder",
             return_value={"available": True},
         ), patch.dict(os.environ, {"PETCAM_CSI_INTRA": "15", "PETCAM_CSI_BITRATE": "10000000"}):
             command = build_capture_command(csi)
+        self.assertEqual(command[0], "rpicam-vid")
         self.assertIn("--intra", command)
         self.assertEqual(command[command.index("--intra") + 1], "15")
         self.assertIn("--bitrate", command)
         self.assertEqual(command[command.index("--bitrate") + 1], "10000000")
 
     def test_non_native_source_is_rejected(self):
-        with self.assertRaises(Live555Error):
+        with self.assertRaises(CaptureError):
             build_capture_command({**self.usb, "native_h264": False})
 
     def test_invalid_backend_is_rejected(self):
-        with self.assertRaisesRegex(Live555Error, "backend"):
+        with self.assertRaisesRegex(CaptureError, "backend"):
             build_capture_command({**self.usb, "backend": "network"})
-
-    def test_publisher_marks_only_the_idr_nal(self):
-        class FakeServer:
-            def __init__(self):
-                self.nals = []
-            def push_nal(self, nal, is_idr=False):
-                self.nals.append((nal, is_idr))
-
-        server = FakeServer()
-        publisher = H264Publisher(server)
-        prefix = b"\x00\x00\x00\x01"
-        publisher.publish(prefix + b"\x67\x42\x00\x1e")
-        publisher.publish(prefix + b"\x68\xce\x06")
-        publisher.publish(prefix + b"\x65\x88")
-        publisher.publish(prefix + b"\x41\x9a")
-        self.assertEqual(server.nals, [
-            (b"\x67\x42\x00\x1e", False),
-            (b"\x68\xce\x06", False),
-            (b"\x65\x88", True),
-            (b"\x41\x9a", False),
-        ])
-        self.assertEqual(
-            publisher.counter_snapshot(),
-            {
-                "captured": {"7": 1, "8": 1, "5": 1, "1": 1},
-                "queued": {"7": 1, "8": 1, "5": 1, "1": 1},
-            },
-        )
-
-    def test_publisher_rejects_idr_without_parameter_sets(self):
-        class FakeServer:
-            def push_nal(self, nal, is_idr=False):
-                raise AssertionError("Must not publish without SPS/PPS")
-        with self.assertRaisesRegex(Live555Error, "SPS and PPS"):
-            H264Publisher(FakeServer()).publish(b"\x00\x00\x00\x01\x65\x88")
-
-
-    def test_publisher_repeats_parameter_sets_only_before_first_idr_slice(self):
-        class FakeServer:
-            def __init__(self):
-                self.nals = []
-            def push_nal(self, nal, is_idr=False):
-                self.nals.append((nal, is_idr))
-
-        prefix = b"\x00\x00\x00\x01"
-        sps = b"\x67\x42\x00\x1e"
-        pps = b"\x68\xce\x06"
-        idr_first = b"\x65\xe0"  # first_mb_in_slice = 0
-        idr_continuation = b"\x65\x58"  # first_mb_in_slice = 1
-
-        server = FakeServer()
-        publisher = H264Publisher(server)
-        publisher.publish(prefix + sps)
-        publisher.publish(prefix + pps)
-        publisher.publish(prefix + idr_first)
-        publisher.publish(prefix + idr_continuation)
-        publisher.publish(prefix + idr_first)
-        publisher.publish(prefix + idr_continuation)
-
-        self.assertEqual(server.nals, [
-            (sps, False),
-            (pps, False),
-            (idr_first, True),
-            (idr_continuation, True),
-            (sps, False),
-            (pps, False),
-            (idr_first, True),
-            (idr_continuation, True),
-        ])
-
-    def test_first_mb_in_slice_distinguishes_picture_start_from_continuation(self):
-        self.assertEqual(first_mb_in_slice(b"\x00\x00\x00\x01\x65\xe0"), 0)
-        self.assertEqual(first_mb_in_slice(b"\x00\x00\x00\x01\x65\x58"), 1)
-
-class H264AccessUnitFramingTests(unittest.TestCase):
-    @staticmethod
-    def nal(header: int, payload: bytes = b"\x80") -> bytes:
-        return b"\x00\x00\x00\x01" + bytes([header]) + payload
-
-    def test_annex_b_framer_handles_split_start_codes_and_final_nal(self):
-        sps = self.nal(0x67, b"\x42\x00\x1e")
-        pps = self.nal(0x68, b"\xce\x06")
-        framer = AnnexBNalFramer()
-        stream = sps + pps
-        output = []
-        output.extend(framer.feed(stream[:7]))
-        output.extend(framer.feed(stream[7:13]))
-        output.extend(framer.feed(stream[13:]))
-        output.extend(framer.flush())
-        self.assertEqual(output, [sps, pps])
-
-    def test_large_nal_is_scanned_incrementally_across_pipe_reads(self):
-        prefix = b"\x00\x00\x00\x01"
-        first_nal = prefix + b"\x65" + b"x" * 131072
-        framer = AnnexBNalFramer()
-
-        self.assertEqual(framer.feed(first_nal[:65541]), [])
-        previous_offset = framer._scan_offset
-        self.assertEqual(framer.feed(first_nal[65541:]), [])
-        self.assertGreater(framer._scan_offset, previous_offset)
-
-        output = []
-        output.extend(framer.feed(b"\x00\x00"))
-        output.extend(framer.feed(b"\x00"))
-        output.extend(framer.feed(b"\x01\x41\x80"))
-        self.assertEqual(output, [first_nal])
-        self.assertEqual(framer.flush(), [prefix + b"\x41\x80"])
-
-    def test_access_unit_metadata_retains_codec_config_for_late_rtsp_clients(self):
-        sps = self.nal(0x67, b"\x42\x00\x1e")
-        pps = self.nal(0x68, b"\xce\x06")
-        aud = self.nal(0x09, b"\xf0")
-        idr = self.nal(0x65)
-        metadata = inspect_h264_access_unit(sps + pps + aud + idr)
-        self.assertEqual(metadata["sps"], sps)
-        self.assertEqual(metadata["pps"], pps)
-        self.assertTrue(metadata["has_sps"])
-        self.assertTrue(metadata["has_pps"])
-        self.assertTrue(metadata["has_idr"])
-
-    def test_access_units_split_at_first_slice_and_keep_parameter_sets(self):
-        sps = self.nal(0x67, b"\x42\x00\x1e")
-        pps = self.nal(0x68, b"\xce\x06")
-        aud = self.nal(0x09, b"\xf0")
-        idr = self.nal(0x65)
-        first_p = self.nal(0x41)
-        second_p = self.nal(0x41)
-        framer = H264AccessUnitFramer()
-        stream = sps + pps + aud + idr + first_p + second_p
-        output = []
-        for offset in range(0, len(stream), 5):
-            output.extend(framer.feed(stream[offset:offset + 5]))
-        output.extend(framer.flush())
-        self.assertEqual(output, [sps + pps + aud + idr, first_p, second_p])
 
 
 if __name__ == "__main__":

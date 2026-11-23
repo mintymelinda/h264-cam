@@ -6,14 +6,10 @@ from __future__ import annotations
 import argparse
 import curses
 import json
-import logging
 import math
-import os
 import re
-import subprocess
 import sys
 import time
-from pathlib import Path
 
 from .configuration import ConfigurationError, validate_config
 from .domain.camera.capabilities import mode_fps_values
@@ -22,14 +18,10 @@ from .infrastructure.camera.discovery import (
     discover_csi_cameras,
     discover_usb_cameras,
 )
+from .infrastructure.streaming.gstreamer import GStreamerSession, RTSP_PORT, RTSP_PATH
 from .infrastructure.system.metrics import ResourceMetrics
 from .infrastructure.system.hostname import advertised_hostname
 
-RUN_DIR = Path(os.environ.get("PETCAM_RUN", f"/tmp/petcam-{os.getuid()}"))
-CAMERA_STATUS = RUN_DIR / "camera-status.json"
-STREAM_STATUS = RUN_DIR / "stream-status.json"
-RTSP_PORT = 8554
-RTSP_PATH = "/petcam"
 HOTPLUG = object()
 
 
@@ -317,84 +309,18 @@ def guided_configuration(stdscr) -> dict:
             break
 
 
-def _read_status() -> dict:
-    try:
-        payload = json.loads(STREAM_STATUS.read_text(encoding="utf-8"))
-        return payload if isinstance(payload, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def _terminate(process: subprocess.Popen | None) -> None:
-    if process is None or process.poll() is not None:
-        return
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=2)
-
-
 def run_stream(config: dict, stdscr) -> int:
-    RUN_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(RUN_DIR, 0o700)
-    CAMERA_STATUS.unlink(missing_ok=True)
-    STREAM_STATUS.unlink(missing_ok=True)
-    environment = os.environ.copy()
-    environment["PETCAM_RUN"] = str(RUN_DIR)
-    streaming_process = None
-    camera_marker_owned = False
-
+    session = GStreamerSession(config)
     try:
-        marker = {
-            "pid": os.getpid(),
-            "backend": config["source"].lower(),
-            "resolution": config["resolution"],
-            "fps": config["fps"],
-            "native_h264": True,
-        }
-        if config["source"] == "USB":
-            marker.update(
-                device=config["device"],
-                physical_path=config.get("physical_path", ""),
-            )
-        else:
-            marker.update(
-                camera=config["camera"],
-                sensor=config.get("sensor", ""),
-                device_path=config.get("device_path", ""),
-            )
-        temporary = CAMERA_STATUS.with_name(CAMERA_STATUS.name + ".tmp")
-        temporary.write_text(json.dumps(marker) + "\n", encoding="utf-8")
-        os.replace(temporary, CAMERA_STATUS)
-        camera_marker_owned = True
-
-        streaming_process = subprocess.Popen(
-            [sys.executable, "-m", "petcam.infrastructure.streaming.live555"],
-            env=environment, stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        start_deadline = time.monotonic() + 20
-        while time.monotonic() < start_deadline:
-            if streaming_process.poll() is not None:
-                raise RuntimeError("The Live555 H.264 RTSP server exited during startup.")
-            status = _read_status()
-            if status.get("state") in {"ready", "publishing"}:
-                break
-            if status.get("state") == "error":
-                raise RuntimeError(status.get("message") or "The Live555 H.264 RTSP server failed.")
-            time.sleep(0.2)
-        else:
-            raise RuntimeError("The Live555 H.264 RTSP server did not become ready.")
-
+        session.start()
         url = f"rtsp://{advertised_hostname()}:{RTSP_PORT}{RTSP_PATH}"
         metrics = ResourceMetrics()
-        stdscr.timeout(1000)
+        stdscr.timeout(500)
         while True:
-            if streaming_process.poll() is not None:
-                raise RuntimeError("The Live555 H.264 RTSP server stopped unexpectedly.")
-            status = _read_status()
+            session.iterate()
+            status = session.snapshot()
+            if status["state"] == "error":
+                raise RuntimeError(status["message"] or "The GStreamer stream failed.")
             resources = metrics.sample()
             height, width = stdscr.getmaxyx()
             stdscr.erase()
@@ -402,81 +328,35 @@ def run_stream(config: dict, stdscr) -> int:
             stdscr.addnstr(2, 0, "RTSP URL", max(1, width - 1), curses.A_BOLD)
             stdscr.addnstr(3, 0, url, max(1, width - 1))
             stdscr.addnstr(5, 0, "STREAM STATUS", max(1, width - 1), curses.A_BOLD)
-            status_updated_at = status.get("updated_at")
-            status_stale = (
-                not isinstance(status_updated_at, (int, float))
-                or time.time() - status_updated_at > 3
+            stdscr.addnstr(6, 0, f"GStreamer RTSP: {status['state'].upper()}", max(1, width - 1))
+            stdscr.addnstr(7, 0, f"RTSP clients: {status['clients']}", max(1, width - 1))
+            input_rate = status["capture_bytes_per_second"] / (1024 * 1024)
+            input_total = status["capture_bytes_total"] / (1024 * 1024)
+            stdscr.addnstr(8, 0, f"Camera input: {input_rate:.2f} MiB/s", max(1, width - 1))
+            stdscr.addnstr(9, 0, f"Data received: {input_total:.1f} MiB", max(1, width - 1))
+            stdscr.addnstr(
+                10, 0,
+                f"Capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264",
+                max(1, width - 1),
             )
-            rtsp_state = "STATUS STALE" if status_stale else status.get("state", "starting").upper()
-            stdscr.addnstr(6, 0, f"RTSP: {rtsp_state}", max(1, width - 1))
-            clients = status.get("rtsp_clients")
-            if status_stale or not isinstance(clients, int):
-                client_text = "Unavailable"
-            else:
-                client_text = str(clients)
-            stdscr.addnstr(7, 0, f"RTSP clients: {client_text}", max(1, width - 1))
-            def type_count(field: str, nal_type: int) -> int:
-                values = status.get(field, {})
-                if not isinstance(values, dict):
-                    return 0
-                try:
-                    return int(values.get(str(nal_type), 0))
-                except (TypeError, ValueError):
-                    return 0
-
-            def rate_text(field: str) -> str:
-                value = status.get(field)
-                return f"{value:.1f} NAL/s" if isinstance(value, (int, float)) else "Unavailable"
-
-            if status_stale:
-                capture_text = queue_text = output_text = "Status unavailable"
-            else:
-                capture_text = (
-                    f"{rate_text('captured_nals_per_second')} · "
-                    f"IDR {type_count('captured_nals_by_type', 5)} · "
-                    f"non-IDR {type_count('captured_nals_by_type', 1)}"
-                )
-                queue_text = (
-                    f"{rate_text('queued_nals_per_second')} · "
-                    f"IDR {type_count('queued_nals_by_type', 5)} · "
-                    f"non-IDR {type_count('queued_nals_by_type', 1)}"
-                )
-                if not isinstance(clients, int):
-                    output_text = "Client count unavailable"
-                elif clients < 1:
-                    output_text = "Waiting for RTSP client"
-                else:
-                    output_text = (
-                        f"{rate_text('streamed_nals_per_second')} · "
-                        f"IDR {type_count('rtsp_source_nals_by_type', 5)} · "
-                        f"non-IDR {type_count('rtsp_source_nals_by_type', 1)}"
-                    )
-            stdscr.addnstr(8, 0, f"Camera input: {capture_text}", max(1, width - 1))
-            stdscr.addnstr(9, 0, f"Server queue: {queue_text}", max(1, width - 1))
-            stdscr.addnstr(10, 0, f"RTSP source: {output_text}", max(1, width - 1))
-            stdscr.addnstr(11, 0, f"Capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264", max(1, width - 1))
-            stdscr.addnstr(13, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
+            stdscr.addnstr(12, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
             cpu = resources["cpu_percent"]
             cpu_text = f"{cpu:.1f}%" if isinstance(cpu, (int, float)) else "Sampling…"
             used, total = resources["memory_used_mb"], resources["memory_total_mb"]
             memory_text = f"{used} / {total} MB" if used is not None and total is not None else "Unavailable"
-            stdscr.addnstr(14, 0, f"CPU: {cpu_text}", max(1, width - 1))
-            stdscr.addnstr(15, 0, f"Memory: {memory_text}", max(1, width - 1))
-            stdscr.addnstr(max(0, height - 1), 0, "Press q to stop the RTSP stream", max(1, width - 1), curses.A_DIM)
+            stdscr.addnstr(13, 0, f"CPU: {cpu_text}", max(1, width - 1))
+            stdscr.addnstr(14, 0, f"Memory: {memory_text}", max(1, width - 1))
+            stdscr.addnstr(
+                max(0, height - 1), 0,
+                "Leave this window open · Press q to stop the stream",
+                max(1, width - 1), curses.A_DIM,
+            )
             stdscr.refresh()
             key = stdscr.getch()
             if key in (ord("q"), ord("Q"), 27):
                 return 0
     finally:
-        _terminate(streaming_process)
-        if camera_marker_owned:
-            try:
-                marker = json.loads(CAMERA_STATUS.read_text(encoding="utf-8"))
-                if marker.get("pid") == os.getpid():
-                    CAMERA_STATUS.unlink(missing_ok=True)
-            except (OSError, ValueError):
-                pass
-        STREAM_STATUS.unlink(missing_ok=True)
+        session.stop()
 
 
 def _terminal_main(stdscr, config: dict | None) -> int:
