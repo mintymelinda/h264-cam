@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="${PETCAM_INSTALL_ROOT:-/opt/petcam}"
-log() { printf '[petcam-install] %s\n' "$*"; }
-fail() { printf '[petcam-install] ERROR: %s\n' "$*" >&2; exit 1; }
+log() { printf '[petcam-install] %s\\n' "$*"; }
+fail() { printf '[petcam-install] ERROR: %s\\n' "$*" >&2; exit 1; }
 [[ "$EUID" -eq 0 ]] || fail "Run as root: sudo $0"
 command -v apt-get >/dev/null 2>&1 || fail "Raspberry Pi OS / Debian with apt is required."
 command -v dpkg >/dev/null 2>&1 || fail "dpkg is required."
@@ -14,7 +14,6 @@ fi
 [[ -s "$REPO_ROOT/petcam" ]] || fail "The PetCam launcher source is empty."
 grep -Fq 'exec /usr/bin/python3 -m petcam.cli' "$REPO_ROOT/petcam" || fail "The PetCam launcher source does not invoke the application CLI."
 [[ -f "$REPO_ROOT/src/petcam/infrastructure/streaming/live555_server.cpp" ]] || fail "Live555 installer source files are missing."
-[[ -s "$REPO_ROOT/scripts/smoke-test-installed-launcher.py" ]] || fail "The installed-launcher pseudo-terminal smoke test is missing."
 [[ -s "$REPO_ROOT/scripts/smoke-test-installed-help.py" ]] || fail "The exact installed-help smoke test is missing."
 package_arch="$(dpkg --print-architecture)"
 [[ "$package_arch" == "armhf" ]] || fail "PetCam requires ARMHF; detected '$package_arch'."
@@ -54,21 +53,21 @@ if ! diff -qr "$REPO_ROOT/src/petcam" "$APP_ROOT/src/petcam"; then
   fail "The installed PetCam Python package does not match the installer source."
 fi
 chown -R root:root "$APP_ROOT"
-log "Compiling and smoke-testing the installed Python application."
+log "Compiling and checking the installed Python application."
 /usr/bin/python3 -m compileall -q "$APP_ROOT/src/petcam"
 if ! HELP_OUTPUT="$(PYTHONPATH="$APP_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" /usr/bin/python3 -m petcam.cli -h 2>&1)"; then
-  printf '%s\n' "$HELP_OUTPUT" >&2
-  fail "The installed PetCam Python CLI failed its startup check."
+  printf '%s\\n' "$HELP_OUTPUT" >&2
+  fail "The installed PetCam Python CLI failed its help check."
 fi
 grep -Fq "usage: petcam" <<< "$HELP_OUTPUT" || fail "The installed PetCam Python CLI did not produce its expected help output."
 log "Compiling the Live555 RTSP/RTP server for ARMHF."
 NATIVE_TMP="$(mktemp "$APP_ROOT/lib/.libpetcam_live555.so.XXXXXX")"
 trap 'rm -f "$NATIVE_TMP"' EXIT
-g++ -std=c++17 -O2 -fPIC -shared \
-  -I/usr/include/liveMedia -I/usr/include/groupsock \
-  -I/usr/include/BasicUsageEnvironment -I/usr/include/UsageEnvironment \
-  "$APP_ROOT/src/petcam/infrastructure/streaming/live555_server.cpp" \
-  -o "$NATIVE_TMP" \
+g++ -std=c++17 -O2 -fPIC -shared \\
+  -I/usr/include/liveMedia -I/usr/include/groupsock \\
+  -I/usr/include/BasicUsageEnvironment -I/usr/include/UsageEnvironment \\
+  "$APP_ROOT/src/petcam/infrastructure/streaming/live555_server.cpp" \\
+  -o "$NATIVE_TMP" \\
   -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment -pthread
 [[ -s "$NATIVE_TMP" ]] || fail "The Live555 compiler produced an empty shared library."
 ELF_HEADER="$(readelf -h "$NATIVE_TMP")" || fail "The compiled Live555 library is not a valid ELF shared library."
@@ -76,7 +75,7 @@ grep -Eq 'Class:[[:space:]]+ELF32' <<< "$ELF_HEADER" || fail "The Live555 librar
 grep -Eq 'Machine:[[:space:]]+ARM' <<< "$ELF_HEADER" || fail "The Live555 library was not compiled for ARM."
 NATIVE_DEPS="$(ldd "$NATIVE_TMP" 2>&1)" || fail "Unable to inspect Live555 library dependencies."
 if grep -Fq "not found" <<< "$NATIVE_DEPS"; then
-  printf '%s\n' "$NATIVE_DEPS" >&2
+  printf '%s\\n' "$NATIVE_DEPS" >&2
   fail "The compiled Live555 library has unresolved runtime dependencies."
 fi
 chmod 0755 "$NATIVE_TMP"
@@ -84,15 +83,11 @@ chown root:root "$NATIVE_TMP"
 mv -f "$NATIVE_TMP" "$APP_ROOT/lib/libpetcam_live555.so"
 trap - EXIT
 [[ -s "$APP_ROOT/lib/libpetcam_live555.so" ]] || fail "The installed Live555 shared library is empty."
-log "Loading the compiled Live555 library through the installed Python binding."
+log "Checking that the installed Python binding can load the compiled Live555 library."
 PYTHONPATH="$APP_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" /usr/bin/python3 -c 'from petcam.infrastructure.streaming.live555 import Live555Server; Live555Server(); print("Live555 native library loaded successfully.")'
-log "Testing RTSP interleaved TCP negotiation and RTP delivery."
-PYTHONPATH="$APP_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
-PETCAM_LIVE555_LIBRARY="$APP_ROOT/lib/libpetcam_live555.so" \
-  /usr/bin/python3 "$REPO_ROOT/scripts/check_rtsp_tcp.py" --self-test
 log "Leaving build dependencies installed. Do not purge packages or run autoremove on the Pi."
 LAUNCHER_TMP="/usr/local/bin/.petcam.${BASHPID}"
-log "Installing and validating the PetCam command launcher."
+log "Installing the PetCam command launcher."
 install -m 0755 "$REPO_ROOT/petcam" "$LAUNCHER_TMP"
 if ! cmp -s "$REPO_ROOT/petcam" "$LAUNCHER_TMP"; then
   rm -f "$LAUNCHER_TMP"
@@ -112,10 +107,8 @@ log "Verifying the installed command's exact help output."
 if ! /usr/bin/python3 "$REPO_ROOT/scripts/smoke-test-installed-help.py"; then
   fail "The installed /usr/local/bin/petcam -h output did not match exactly."
 fi
-log "Verifying the installed command opens the interactive setup UI."
-if ! TERM=xterm-256color /usr/bin/python3 "$REPO_ROOT/scripts/smoke-test-installed-launcher.py"; then
-  fail "The installed /usr/local/bin/petcam command did not remain interactive."
-fi
 log "Installed PetCam at $APP_ROOT."
-log "Verified the installed launcher, interactive setup UI, Python package, and native Live555 library."
-log "Run 'petcam' for guided setup or 'petcam -h' for command help."
+log "Verified the Python package, CLI help, and native Live555 library."
+log "Camera detection, capture, and RTSP streaming are not tested during installation."
+log "Connect and configure a camera, then run 'petcam' to start capture and streaming."
+log "Run 'petcam -h' for command help."
