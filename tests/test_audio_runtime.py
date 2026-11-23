@@ -30,7 +30,7 @@ class PcmAudioFramerTests(unittest.TestCase):
 
 
 class AlsaCaptureVolumeTests(unittest.TestCase):
-    def test_sets_microphone_capture_volume_to_100_percent(self):
+    def test_sets_selected_microphone_capture_volume(self):
         with (
             patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/amixer"),
             patch(
@@ -38,10 +38,10 @@ class AlsaCaptureVolumeTests(unittest.TestCase):
                 return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
             ) as run,
         ):
-            set_alsa_capture_volume("plughw:1,0")
+            set_alsa_capture_volume("plughw:1,0", 75)
 
         run.assert_called_once_with(
-            ["/usr/bin/amixer", "-c", "1", "sset", "Mic", "100%", "cap"],
+            ["/usr/bin/amixer", "-c", "1", "sset", "Mic", "75%", "cap"],
             check=False,
             capture_output=True,
             text=True,
@@ -56,9 +56,10 @@ class AlsaCaptureVolumeTests(unittest.TestCase):
                 return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
             ) as run,
         ):
-            set_alsa_capture_volume("hw:2,0")
+            set_alsa_capture_volume("hw:2,0", 50)
 
         self.assertEqual(run.call_args.args[0][2], "2")
+        self.assertEqual(run.call_args.args[0][5], "50%")
 
     def test_rejects_device_names_without_a_numeric_card(self):
         with self.assertRaisesRegex(Live555Error, "numeric hw:CARD,DEVICE"):
@@ -79,6 +80,10 @@ class AlsaCaptureVolumeTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(Live555Error, "capture volume to 100%"):
                 set_alsa_capture_volume("plughw:1,0")
+
+    def test_rejects_capture_gain_outside_percentage_range(self):
+        with self.assertRaisesRegex(Live555Error, "between 0 and 100"):
+            set_alsa_capture_volume("plughw:1,0", 101)
 
 
 class AudioCaptureCommandTests(unittest.TestCase):
