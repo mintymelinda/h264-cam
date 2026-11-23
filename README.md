@@ -1,8 +1,11 @@
 # H264 Cam
 
-H264 Cam serves a camera's native H.264 capture stream over RTSP using Live555. It does
-not decode, transcode, or provide a web interface, motion processing, timelapse, or
-Home Assistant integration.
+H264 Cam serves a camera's native H.264 capture stream over RTSP using Live555. The same
+RTSP session includes a stereo Opus microphone audio track captured through ALSA at
+48 kHz; automatic device selection prefers the Razer Kiyo microphone. PetCam does not
+decode or transcode the video, or provide a web interface, motion processing, timelapse,
+or Home Assistant
+integration.
 
 ## Supported platform
 
@@ -85,12 +88,11 @@ To verify TCP negotiation and receipt of an interleaved RTP packet without a vid
 python3 scripts/check_rtsp_tcp.py rtsp://DEVICE-HOSTNAME.local:8554/petcam
 ```
 
-The installer and CI run the same probe against a local Live555 instance using synthetic H.264
-NAL units. The self-test includes a 256 KiB IDR NAL that must be fragmented into RTP FU-A packets
-and reassembled byte-for-byte, with contiguous sequence numbers, one RTP timestamp, and the
-access-unit marker on the final fragment. The probe also buffers interleaved RTCP/RTP frames
-between RTSP control responses. This verifies TCP packet delivery and packetization, but does
-not assess the camera's visual decoding quality.
+CI runs a local Live555 microphone-track self-test using synthetic PCM frames. It verifies
+the RTSP audio SDP, TCP SETUP and PLAY negotiation, and receipt of a 20 ms Opus RTP packet.
+This test deliberately does not open a camera or microphone device, so it runs in a hardware-free
+CI environment. To probe an actual camera stream, pass its RTSP URL to
+`scripts/check_rtsp_tcp.py`; this checks RTSP/TCP negotiation and receipt of video RTP data.
 
 Optional environment variables can be set before launching `petcam`:
 
@@ -101,7 +103,21 @@ Optional environment variables can be set before launching `petcam`:
 | `PETCAM_V4L2_CONTROLS` | unset | Optional integer controls passed to `v4l2-ctl --set-ctrl`, e.g. `video_gop_size=30,video_bitrate=6000000` |
 | `PETCAM_CSI_INTRA` | `30` | CSI H.264 I-frame interval in frames |
 | `PETCAM_CSI_BITRATE` | `8000000` | CSI H.264 target bitrate in bits per second |
+| `PETCAM_AUDIO` | `1` | Enable the ALSA microphone audio track; set to `0` to disable it |
+| `PETCAM_AUDIO_DEVICE` | `auto` | ALSA capture device; automatic selection prefers Razer Kiyo, otherwise the first capture device |
 | `PETCAM_LIVE555_FRAMER` | `stream` | Select `stream` (Annex-B byte-stream parser) or experimental `discrete` NAL framing |
+
+To inspect ALSA capture devices manually, run `arecord -l`. Automatic selection chooses
+the Razer Kiyo when it is listed, then falls back to the first available capture device.
+To force a specific ALSA device, set `PETCAM_AUDIO_DEVICE=plughw:1,0` (replace the card
+and device numbers with those shown by `arecord -l`). Capture requests native-format
+stereo S16_LE at 48 kHz in 20 ms frames. The Razer Kiyo advertises this exact format, so
+its capture path does not need ALSA rate or channel conversion. Opus encodes the frames
+as 20 ms stereo RTP packets at 64 kbit/s with encoder complexity 1 to reduce CPU use
+on the Pi Zero W. The RTP clock is 48 kHz; Live555 assigns the dynamic RTP payload type.
+Set `PETCAM_AUDIO=0` only when video-only output is required. Use
+`scripts/check_rtsp_tcp.py --require-audio rtsp://DEVICE-HOSTNAME.local:8554/petcam`
+to verify both video and microphone RTP delivery from the running device.
 
 For example, to test the optional USB controls and a larger capture ring:
 

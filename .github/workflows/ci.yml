@@ -27,6 +27,7 @@ jobs:
             python3 \
             g++ \
             liblivemedia-dev \
+            libopus-dev \
             libssl-dev
 
       - name: Check out source
@@ -51,6 +52,14 @@ jobs:
             -o "$RUNNER_TEMP/test_live555_nal_chunks"
           "$RUNNER_TEMP/test_live555_nal_chunks"
 
+      - name: Test Opus microphone audio encoding
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            tests/test_live555_opus.cpp \
+            -lopus \
+            -o "$RUNNER_TEMP/test_live555_opus"
+          "$RUNNER_TEMP/test_live555_opus"
+
       - name: Build the Live555 shared library
         run: |
           g++ -std=c++17 -O2 -fPIC -shared \
@@ -58,6 +67,12 @@ jobs:
             -I/usr/include/BasicUsageEnvironment -I/usr/include/UsageEnvironment \
             src/petcam/infrastructure/streaming/live555_server.cpp \
             -o "$RUNNER_TEMP/libpetcam_live555.so" \
-            -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment -pthread
+            -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment -lopus -pthread
           test -s "$RUNNER_TEMP/libpetcam_live555.so"
           ldd "$RUNNER_TEMP/libpetcam_live555.so"
+
+      - name: Test synthetic microphone RTP track (no hardware)
+        env:
+          PYTHONPATH: src
+          PETCAM_LIVE555_LIBRARY: ${{ runner.temp }}/libpetcam_live555.so
+        run: python3 scripts/check_rtsp_tcp.py --self-test
