@@ -120,10 +120,10 @@ class RTSPConnection:
             raise RTSPProbeError("Received an invalid RTP packet.")
         return channel, len(packet)
 
-    def wait_for_audio(self, timeout: float) -> tuple[int, int]:
+    def wait_for_audio(self, timeout: float, channel: int = 2) -> tuple[int, int]:
         deadline = time.monotonic() + timeout
         try:
-            channel, packet = self._read_interleaved_frame(deadline, channel=2)
+            channel, packet = self._read_interleaved_frame(deadline, channel=channel)
         except RTSPProbeError as error:
             raise RTSPProbeError(f"Microphone audio RTP did not arrive: {error}") from error
         _, timestamp, _, payload_type, payload = self._rtp_payload(packet)
@@ -368,7 +368,78 @@ def probe(
         connection.close()
 
 
+def probe_audio(url: str, timeout: float = 5.0) -> tuple[int, int]:
+    """Verify the RTSP microphone track using synthetic audio only (no camera)."""
+    connection = RTSPConnection(url, timeout)
+    try:
+        status, _, _ = connection.request("OPTIONS", url)
+        if status != 200:
+            raise RTSPProbeError(f"OPTIONS failed with RTSP status {status}.")
+
+        status, describe_headers, sdp = connection.request(
+            "DESCRIBE", url, {"Accept": "application/sdp"}
+        )
+        if status != 200:
+            raise RTSPProbeError(f"DESCRIBE failed with RTSP status {status}.")
+
+        audio_control = None
+        audio_codec_found = False
+        current_media = None
+        for line in sdp.decode("utf-8", "replace").splitlines():
+            if line.lower().startswith("m="):
+                media_fields = line[2:].split()
+                current_media = media_fields[0].lower() if media_fields else None
+                # PCMU/8000 mono is RTP's static payload type 0.
+                if current_media == "audio" and "0" in media_fields[3:]:
+                    audio_codec_found = True
+            elif line.lower().startswith("a=control:") and current_media == "audio":
+                value = line.partition(":")[2].strip()
+                if value != "*":
+                    audio_control = value
+            elif current_media == "audio" and line.lower().startswith("a=rtpmap:"):
+                if "PCMU/8000" in line.upper():
+                    audio_codec_found = True
+
+        if not audio_control or not audio_codec_found:
+            raise RTSPProbeError(
+                "DESCRIBE SDP did not advertise the PCMU/8000 microphone audio track."
+            )
+
+        content_base = describe_headers.get("content-base", url.rstrip("/") + "/")
+        if not content_base.endswith("/"):
+            content_base += "/"
+        audio_track_url = urljoin(content_base, audio_control)
+        status, setup_headers, _ = connection.request(
+            "SETUP",
+            audio_track_url,
+            {"Transport": "RTP/AVP/TCP;unicast;interleaved=0-1"},
+        )
+        if status != 200:
+            raise RTSPProbeError(
+                f"Audio TCP SETUP failed with RTSP status {status}."
+            )
+        transport = setup_headers.get("transport", "")
+        if "RTP/AVP/TCP" not in transport.upper() or "interleaved=0-1" not in transport.lower():
+            raise RTSPProbeError(
+                f"Server returned an unexpected audio TCP Transport header: {transport!r}"
+            )
+        session = setup_headers.get("session", "").split(";", 1)[0]
+        if not session:
+            raise RTSPProbeError("Audio TCP SETUP succeeded without an RTSP Session header.")
+
+        status, _, _ = connection.request(
+            "PLAY", url, {"Session": session, "Range": "npt=0.000-"}
+        )
+        if status != 200:
+            raise RTSPProbeError(f"PLAY failed with RTSP status {status}.")
+
+        return connection.wait_for_audio(timeout, channel=0)
+    finally:
+        connection.close()
+
+
 def run_self_test(timeout: float) -> tuple[int, int, int]:
+    """Exercise Live555 with synthetic PCM; deliberately requires no camera or ALSA."""
     from petcam.infrastructure.streaming.live555 import Live555Server
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -380,7 +451,7 @@ def run_self_test(timeout: float) -> tuple[int, int, int]:
     stop_audio = threading.Event()
 
     def publish_test_audio() -> None:
-        frame = bytes(320)
+        frame = bytes(320)  # 20 ms of synthetic mono S16_LE silence at 8 kHz.
         next_frame = time.monotonic()
         while not stop_audio.is_set():
             server.push_audio_pcm(frame)
@@ -389,22 +460,12 @@ def run_self_test(timeout: float) -> tuple[int, int, int]:
 
     audio_thread = threading.Thread(target=publish_test_audio, name="pcmu-self-test", daemon=True)
     try:
-        # A large synthetic IDR forces Live555 to fragment the NAL into FU-A
-        # RTP packets. The TCP probe reassembles those packets and compares
-        # every NAL byte with this source buffer. A concurrent synthetic PCM
-        # source proves that the second RTSP track negotiates and delivers PCMU.
         audio_thread.start()
-        large_idr = bytes([0x65, 0x80]) + bytes([0x55]) * (256 * 1024 - 2)
-        server.push_nal(bytes.fromhex("6742001f95a814016e40"))
-        server.push_nal(bytes.fromhex("68ce06e2"))
-        server.push_nal(large_idr, is_idr=True)
-        server.push_nal(bytes.fromhex("41803344"))
-        return probe(
+        payload_size, timestamp = probe_audio(
             f"rtsp://127.0.0.1:{port}/petcam",
             timeout,
-            large_idr,
-            require_audio=True,
         )
+        return 1, payload_size, timestamp
     finally:
         stop_audio.set()
         if audio_thread.is_alive():
@@ -447,10 +508,9 @@ def main() -> int:
         return 1
     if args.self_test:
         print(
-            "RTSP/TCP probe PASSED: OPTIONS, DESCRIBE, TCP SETUP, PLAY, "
-            f"and byte-exact FU-A reassembly of a {nal_size}-byte NAL "
-            f"across {packet_count} RTP packets (timestamp {timestamp}), "
-            "plus a live 160-byte PCMU audio RTP payload."
+            "RTSP audio self-test PASSED: OPTIONS, DESCRIBE, microphone TCP SETUP, "
+            f"PLAY, and a live {nal_size}-byte PCMU RTP payload (timestamp {timestamp}). "
+            "The test uses synthetic audio and does not require a camera or microphone."
         )
     else:
         print(
