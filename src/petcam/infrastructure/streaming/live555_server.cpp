@@ -37,7 +37,6 @@ std::mutex audioQueueMutex;
 struct AudioFrame { std::uint64_t seq; std::vector<unsigned char> data; };
 std::deque<AudioFrame> audioQueue;
 std::uint64_t audioSequence = 1;
-constexpr std::size_t kMaxAudioQueueFrames = 100;
 int kAudioSampleRate = 48000;
 int kAudioChannels = 2;
 int kAudioFrameSamples = 960;
@@ -423,7 +422,7 @@ int petcam_start(unsigned short port, const char* path) {
 
 int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
   if (!data || size != kAudioFrameBytes) return -1;
-  std::array<opus_int16, kAudioFrameSamples * kAudioChannels> pcm{};
+  std::vector<opus_int16> pcm(static_cast<std::size_t>(kAudioFrameSamples * kAudioChannels));
   for (std::size_t i = 0; i < pcm.size(); ++i) {
     const std::size_t offset = i * 2;
     const auto raw = static_cast<unsigned>(
