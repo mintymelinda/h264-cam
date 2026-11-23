@@ -461,19 +461,19 @@ def run_self_test(timeout: float) -> tuple[int, int, int]:
         port = listener.getsockname()[1]
 
     server = Live555Server()
-    server.configure_audio({"sample_rate": 48000, "channels": 2, "output_codec": "L16", "packet_ms": 5})
+    server.configure_audio({"sample_rate": 48000, "channels": 2, "output_codec": "OPUS", "packet_ms": 20})
     server.start(port, "/petcam")
     stop_audio = threading.Event()
 
     def publish_test_audio() -> None:
-        frame = bytes(960)  # 5 ms of synthetic stereo S16_LE silence at 48 kHz.
+        frame = bytes(3840)  # 20 ms of synthetic stereo S16_LE silence at 48 kHz.
         next_frame = time.monotonic()
         while not stop_audio.is_set():
             server.push_audio_pcm(frame)
-            next_frame += 0.005
+            next_frame += 0.020
             stop_audio.wait(max(0.0, next_frame - time.monotonic()))
 
-    audio_thread = threading.Thread(target=publish_test_audio, name="l16-self-test", daemon=True)
+    audio_thread = threading.Thread(target=publish_test_audio, name="opus-self-test", daemon=True)
     try:
         audio_thread.start()
         payload_size, timestamp = probe_audio(
@@ -529,7 +529,7 @@ def main() -> int:
     if args.self_test:
         print(
             "RTSP audio self-test PASSED: OPTIONS, DESCRIBE, audio TCP SETUP, "
-            f"PLAY, and a live {nal_size}-byte L16 RTP payload (timestamp {timestamp}). "
+            f"PLAY, and a live {nal_size}-byte Opus RTP payload (timestamp {timestamp}). "
             "The test uses synthetic audio and does not require a camera or microphone."
         )
     else:
