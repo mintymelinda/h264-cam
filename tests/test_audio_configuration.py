@@ -18,41 +18,45 @@ class AudioConfigurationTests(unittest.TestCase):
             "audio": audio,
         }
 
-    def test_validates_supported_opus_packet_durations_and_audio_modes(self) -> None:
-        for packet_ms in (2.5, 5, 10, 20, 40, 60):
-            with self.subTest(packet_ms=packet_ms):
-                normalized = validate_config(self.base_config({
-                    "sample_rate": 48000,
-                    "channels": 2,
-                    "input_format": "S16_LE",
-                    "output_codec": "OPUS",
-                    "bitrate": 128000,
-                    "packet_ms": packet_ms,
-                    "capture_gain_percent": 75,
-                    "device": "plughw:1,0",
-                }))
-                self.assertEqual(normalized["audio"]["packet_ms"], packet_ms)
-                self.assertEqual(normalized["audio"]["capture_gain_percent"], 75)
-                self.assertEqual(normalized["audio"]["device"], "plughw:1,0")
+    def test_validates_l16_audio_configuration(self) -> None:
+        normalized = validate_config(self.base_config({
+            "sample_rate": 48000,
+            "channels": 2,
+            "input_format": "S16_LE",
+            "output_codec": "L16",
+            "packet_ms": 5,
+            "capture_gain_percent": 75,
+            "device": "plughw:1,0",
+        }))
+        self.assertEqual(normalized["audio"]["packet_ms"], 5)
+        self.assertEqual(normalized["audio"]["output_codec"], "L16")
+        self.assertEqual(normalized["audio"]["capture_gain_percent"], 75)
+        self.assertEqual(normalized["audio"]["device"], "plughw:1,0")
+
+    def test_rejects_non_l16_packet_duration(self) -> None:
+        with self.assertRaises(ConfigurationError):
+            validate_config(self.base_config({"packet_ms": 20}))
+
+    def test_rejects_opus_codec(self) -> None:
+        with self.assertRaises(ConfigurationError):
+            validate_config(self.base_config({"output_codec": "OPUS"}))
 
     def test_zero_capture_gain_is_valid(self) -> None:
         normalized = validate_config(self.base_config({"capture_gain_percent": 0}))
         self.assertEqual(normalized["audio"]["capture_gain_percent"], 0)
 
-    def test_rejects_non_opus_packet_duration(self) -> None:
-        with self.assertRaises(ConfigurationError):
-            validate_config(self.base_config({"packet_ms": 15}))
-
-    def test_defaults_legacy_audio_configuration_to_full_capture_gain(self) -> None:
+    def test_defaults_to_l16_and_full_capture_gain(self) -> None:
         normalized = validate_config(self.base_config({}))
+        self.assertEqual(normalized["audio"]["output_codec"], "L16")
         self.assertEqual(normalized["audio"]["capture_gain_percent"], 100)
+        self.assertEqual(normalized["audio"]["packet_ms"], 5)
 
     def test_rejects_capture_gain_outside_percentage_range(self) -> None:
         for gain in (-1, 101):
             with self.subTest(gain=gain), self.assertRaises(ConfigurationError):
                 validate_config(self.base_config({"capture_gain_percent": gain}))
 
-    def test_interactive_audio_setup_offers_zero_capture_gain(self) -> None:
+    def test_interactive_audio_setup_offers_l16_and_zero_gain(self) -> None:
         menu_calls = []
 
         def choose(_stdscr, title, _subtitle, items):
@@ -67,22 +71,25 @@ class AudioConfigurationTests(unittest.TestCase):
         ):
             audio = configure_audio(object())
 
+        codec_menu = next(items for title, items in menu_calls if "output codec" in title.lower())
         gain_menu = next(items for title, items in menu_calls if "capture gain" in title.lower())
+        self.assertEqual(codec_menu, ["PCM (L16)"])
         self.assertIn("0%", gain_menu)
+        self.assertEqual(audio["output_codec"], "L16")
         self.assertEqual(audio["capture_gain_percent"], 75)
 
     def test_pcm_framer_uses_selected_rate_channels_and_packet_duration(self) -> None:
-        framer = PcmAudioFramer(sample_rate=48000, channels=1, packet_ms=2.5)
-        self.assertEqual(framer.frame_bytes, 240)
-        self.assertEqual(framer.feed(b"x" * 239), [])
-        self.assertEqual(framer.feed(b"x"), [b"x" * 240])
+        framer = PcmAudioFramer(sample_rate=48000, channels=2, packet_ms=5)
+        self.assertEqual(framer.frame_bytes, 960)
+        self.assertEqual(framer.feed(b"x" * 959), [])
+        self.assertEqual(framer.feed(b"x"), [b"x" * 960])
 
     def test_capture_command_uses_selected_alsa_mode(self) -> None:
         status = {
             "audio": {
                 "sample_rate": 24000,
                 "channels": 1,
-                "packet_ms": 10,
+                "packet_ms": 5,
                 "device": "plughw:1,0",
             }
         }
