@@ -40,8 +40,8 @@ def _load_gstreamer():
     except (ImportError, ValueError) as error:
         raise GStreamerError(
             "GStreamer RTSP support is missing. Install python3-gi, "
-            "gir1.2-gst-rtsp-server-1.0, gstreamer1.0-plugins-base, "
-            "gstreamer1.0-plugins-good, and PetCam's minimal h264parse package."
+            "gir1.2-gstreamer-1.0, libgstreamer-plugins-base1.0-0, and PetCam's "
+            "minimal GStreamer RTSP/appsrc/RTP/H.264 runtime packages."
         ) from error
     Gst.init(None)
     return GLib, Gst, GstRtspServer
@@ -59,7 +59,7 @@ def validate_runtime() -> None:
     if missing:
         raise GStreamerError(
             "Missing GStreamer elements: " + ", ".join(missing)
-            + ". Install the GStreamer base/good plugins and PetCam's minimal h264parse package."
+            + ". Install the GStreamer core/base libraries and PetCam's minimal runtime packages."
         )
     try:
         pipeline = gst.parse_launch(RTSP_PIPELINE)
