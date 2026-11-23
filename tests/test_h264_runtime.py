@@ -51,6 +51,7 @@ class ShortConfigurationTests(unittest.TestCase):
             "output_codec": "OPUS",
             "bitrate": 128000,
             "packet_ms": 20.0,
+            "capture_gain_percent": 100,
             "device": "auto",
         })
 
