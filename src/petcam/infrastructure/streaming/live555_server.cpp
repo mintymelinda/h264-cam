@@ -290,7 +290,8 @@ protected:
   explicit H264Subsession(UsageEnvironment& env) : OnDemandServerMediaSubsession(env, False) {}
   FramedSource* createNewStreamSource(unsigned, unsigned& bitrate) override {
     bitrate = 8000;
-    connectedClients.fetch_add(1, std::memory_order_relaxed);
+    const auto clients = connectedClients.fetch_add(1, std::memory_order_relaxed) + 1;
+    envir() << "PetCam: H.264 media source opened; active sources=" << clients << "\\n";
     const bool discrete = useDiscreteFramer();
     FramedSource* source = NalSource::createNew(envir(), !discrete);
     if (discrete) {
@@ -304,6 +305,8 @@ protected:
     unsigned current = connectedClients.load(std::memory_order_relaxed);
     while (current > 0 && !connectedClients.compare_exchange_weak(
       current, current - 1, std::memory_order_relaxed)) {}
+    envir() << "PetCam: H.264 media source closed; active sources="
+            << connectedClients.load(std::memory_order_relaxed) << "\\n";
     OnDemandServerMediaSubsession::closeStreamSource(inputSource);
   }
   RTPSink* createNewRTPSink(Groupsock* groupsock, unsigned char payload, FramedSource*) override {
@@ -341,6 +344,7 @@ void serve(unsigned short port, std::string path) {
   }
   startupCondition.notify_all();
   if (startupCode == 0) {
+    *env << "PetCam: RTSP server listening on port " << port << "\\n";
     watch = 0;
     localScheduler->doEventLoop(&watch);
   }
