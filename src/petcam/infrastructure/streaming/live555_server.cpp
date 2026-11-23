@@ -475,7 +475,6 @@ int petcam_start(unsigned short port, const char* path) {
     std::lock_guard<std::mutex> audioLock(audioQueueMutex);
     audioQueue.clear();
     audioSequence = 1;
-    audioQueue.clear();
   }
   deliveredNals.store(0, std::memory_order_relaxed);
   for (auto& count : deliveredNalsByType) count.store(0, std::memory_order_relaxed);
