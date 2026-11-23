@@ -42,3 +42,11 @@ jobs:
         env:
           PYTHONPATH: src
         run: python3 -m unittest discover -s tests -v
+
+      - name: Test coordinated RTSP audio/video session start
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -Isrc/petcam/infrastructure/streaming \
+            tests/test_media_session_start.cpp \
+            -o /tmp/test_media_session_start
+          /tmp/test_media_session_start
