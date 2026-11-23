@@ -113,6 +113,9 @@ rtsp_typelib="$typelib_root/usr/lib/$multiarch/girepository-1.0/GstRtspServer-1.
 parser_plugin="$plugin_root/usr/lib/$multiarch/gstreamer-1.0/libgstvideoparsersbad.so"
 codec_library="$(find "$codec_root/usr/lib/$multiarch" -maxdepth 1 -type f \
   -name 'libgstcodecparsers-1.0.so.0.*' -print -quit)"
+rtp_plugin="$rtp_plugin_root/usr/lib/$multiarch/gstreamer-1.0/libgstrtp.so"
+rtp_library="$(find "$rtp_library_root/usr/lib/$multiarch" -maxdepth 1 -type f \
+  -name 'libgstrtp-1.0.so.0.*' -print -quit)"
 
 [[ -s "$rtsp_library" ]] || fail "The RTSP server shared library is missing."
 [[ -s "$rtsp_typelib" ]] || fail "The RTSP server GObject typelib is missing."
