@@ -272,7 +272,7 @@ def configure_audio(stdscr) -> dict:
     if index is None:
         raise KeyboardInterrupt
     output_codec = "OPUS" if index == 0 else "L16"
-    durations = [10, 20, 40, 60] if output_codec == "OPUS" else [5]
+    durations = [20, 10, 40, 60] if output_codec == "OPUS" else [5]
     index = select_menu(stdscr, "Step 8 · RTP packet duration",
         "Opus uses 20 ms by default; L16 uses 5 ms to keep stereo packets MTU-safe.",
         [str(duration) + " ms" for duration in durations])
