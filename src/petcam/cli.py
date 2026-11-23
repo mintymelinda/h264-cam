@@ -372,8 +372,11 @@ def guided_configuration(stdscr) -> dict:
                 continue
             confirm_index = select_menu(
                 stdscr,
-                "Step 8 · Confirm stream",
-                f"{_camera_label(source, camera)}\n{mode['resolution']} at {mode['fps']:g} FPS · H.264",
+                "Step 10 · Confirm stream",
+                f"{_camera_label(source, camera)}\n{mode['resolution']} at {mode['fps']:g} FPS · H.264\n"
+                f"Audio: {audio['sample_rate']} Hz, {audio['channels']} ch, "
+                f"{audio['input_format']} -> {audio['output_codec']} "
+                f"{audio['bitrate'] // 1000} kbit/s, {audio['packet_ms']:g} ms",
                 ["Activate RTSP stream", "Return to capture mode selection"],
             )
             if confirm_index == 0:
