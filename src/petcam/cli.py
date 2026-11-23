@@ -328,13 +328,17 @@ def _read_log(path: Path = STREAM_LOG) -> list[str]:
 def _show_log_viewer(stdscr, path: Path = STREAM_LOG) -> None:
     """Display a live, scrollable tail of the RTSP process log."""
     offset = 0
+    follow = True
     stdscr.timeout(250)
     while True:
         lines = _read_log(path)
         height, width = stdscr.getmaxyx()
         visible = max(1, height - 4)
         maximum = max(0, len(lines) - visible)
-        offset = min(max(offset, 0), maximum)
+        if follow:
+            offset = maximum
+        else:
+            offset = min(max(offset, 0), maximum)
         stdscr.erase()
         stdscr.addnstr(0, 0, "PetCam · RTSP log", max(1, width - 1), curses.A_BOLD)
         stdscr.addnstr(1, 0, f"{len(lines)} lines · showing {offset + 1}-{min(offset + visible, len(lines))}", max(1, width - 1), curses.A_DIM)
@@ -346,14 +350,19 @@ def _show_log_viewer(stdscr, path: Path = STREAM_LOG) -> None:
         if key in (27, ord("l"), ord("L"), ord("q"), ord("Q")):
             return
         if key in (curses.KEY_UP, ord("k")):
+            follow = False
             offset = max(0, offset - 1)
         elif key in (curses.KEY_DOWN, ord("j")):
             offset = min(maximum, offset + 1)
+            follow = offset == maximum
         elif key in (curses.KEY_PPAGE,):
+            follow = False
             offset = max(0, offset - visible)
         elif key in (curses.KEY_NPAGE,):
             offset = min(maximum, offset + visible)
+            follow = offset == maximum
         elif key in (ord("g"), ord("G")):
+            follow = True
             offset = maximum
 
 
