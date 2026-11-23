@@ -33,7 +33,10 @@ class AlsaCaptureVolumeTests(unittest.TestCase):
     def test_sets_microphone_capture_volume_to_100_percent(self):
         with (
             patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/amixer"),
-            patch("petcam.infrastructure.streaming.live555.subprocess.run") as run,
+            patch(
+                "petcam.infrastructure.streaming.live555.subprocess.run",
+                return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+            ) as run,
         ):
             set_alsa_capture_volume("plughw:1,0")
 
@@ -48,7 +51,10 @@ class AlsaCaptureVolumeTests(unittest.TestCase):
     def test_accepts_raw_hw_device_names(self):
         with (
             patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/amixer"),
-            patch("petcam.infrastructure.streaming.live555.subprocess.run") as run,
+            patch(
+                "petcam.infrastructure.streaming.live555.subprocess.run",
+                return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+            ) as run,
         ):
             set_alsa_capture_volume("hw:2,0")
 
