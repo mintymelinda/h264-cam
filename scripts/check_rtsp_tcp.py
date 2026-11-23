@@ -121,7 +121,7 @@ class RTSPConnection:
         return channel, len(packet)
 
     def wait_for_audio(
-        self, timeout: float, channel: int = 2, payload_type: int = 96
+        self, timeout: float, payload_type: int, channel: int = 2
     ) -> tuple[int, int]:
         deadline = time.monotonic() + timeout
         try:
@@ -131,7 +131,7 @@ class RTSPConnection:
         _, timestamp, _, received_payload_type, payload = self._rtp_payload(packet)
         if received_payload_type != payload_type:
             raise RTSPProbeError(
-                f"Expected dynamic RTP payload type {expected_payload_type} (Opus), received {payload_type}."
+                f"Expected dynamic RTP payload type {payload_type} (Opus), received {received_payload_type}."
             )
         if len(payload) < 2:
             raise RTSPProbeError(

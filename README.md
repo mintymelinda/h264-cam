@@ -114,7 +114,7 @@ and device numbers with those shown by `arecord -l`). Capture requests native-fo
 stereo S16_LE at 48 kHz in 20 ms frames. The Razer Kiyo advertises this exact format, so
 its capture path does not need ALSA rate or channel conversion. Opus encodes the frames
 as 20 ms stereo RTP packets at 64 kbit/s with encoder complexity 1 to reduce CPU use
-on the Pi Zero W. The RTP clock is 48 kHz and the audio payload uses dynamic RTP type 96.
+on the Pi Zero W. The RTP clock is 48 kHz; Live555 assigns the dynamic RTP payload type.
 Set `PETCAM_AUDIO=0` only when video-only output is required. Use
 `scripts/check_rtsp_tcp.py --require-audio rtsp://DEVICE-HOSTNAME.local:8554/petcam`
 to verify both video and microphone RTP delivery from the running device.
