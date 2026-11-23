@@ -1,5 +1,6 @@
 #include <liveMedia.hh>
 #include <H264VideoStreamDiscreteFramer.hh>
+#include <SimpleRTPSink.hh>
 #include <BasicUsageEnvironment.hh>
 #include <GroupsockHelper.hh>
 #include <algorithm>
@@ -31,6 +32,9 @@ struct Nal {
 std::mutex queueMutex, lifecycleMutex;
 std::deque<Nal> queue;
 std::size_t queueBytes = 0;
+std::mutex audioQueueMutex;
+std::deque<std::vector<unsigned char>> audioQueue;
+constexpr std::size_t kMaxAudioQueueFrames = 100;
 std::uint64_t sequence = 1;
 std::thread worker;
 TaskScheduler* scheduler = nullptr;
@@ -189,6 +193,72 @@ private:
   std::size_t currentNalOffset_ = 0;
 };
 
+
+class AudioSource final : public FramedSource {
+public:
+  static AudioSource* createNew(UsageEnvironment& env) { return new AudioSource(env); }
+protected:
+  explicit AudioSource(UsageEnvironment& env) : FramedSource(env) {}
+  void doGetNextFrame() override {
+    nextTask() = envir().taskScheduler().scheduleDelayedTask(0, deliverTask, this);
+  }
+  void doStopGettingFrames() override {
+    if (nextTask() != nullptr) {
+      envir().taskScheduler().unscheduleDelayedTask(nextTask());
+      nextTask() = nullptr;
+    }
+  }
+private:
+  static void deliverTask(void* p) {
+    auto* source = static_cast<AudioSource*>(p);
+    source->nextTask() = nullptr;
+    source->deliver();
+  }
+  static void retry(void* p) {
+    auto* source = static_cast<AudioSource*>(p);
+    source->nextTask() = nullptr;
+    source->deliver();
+  }
+  void deliver() {
+    if (!isCurrentlyAwaitingData()) return;
+    std::vector<unsigned char> frame;
+    {
+      std::lock_guard<std::mutex> lock(audioQueueMutex);
+      if (!audioQueue.empty()) {
+        frame = std::move(audioQueue.front());
+        audioQueue.pop_front();
+      }
+    }
+    if (frame.empty()) {
+      nextTask() = envir().taskScheduler().scheduleDelayedTask(5000, retry, this);
+      return;
+    }
+    const auto size = std::min(frame.size(), static_cast<std::size_t>(fMaxSize));
+    std::memcpy(fTo, frame.data(), size);
+    fFrameSize = static_cast<unsigned>(size);
+    fNumTruncatedBytes = static_cast<unsigned>(frame.size() - size);
+    gettimeofday(&fPresentationTime, nullptr);
+    fDurationInMicroseconds = 20000;
+    FramedSource::afterGetting(this);
+  }
+};
+class AudioSubsession final : public OnDemandServerMediaSubsession {
+public:
+  static AudioSubsession* createNew(UsageEnvironment& env) { return new AudioSubsession(env); }
+protected:
+  explicit AudioSubsession(UsageEnvironment& env) : OnDemandServerMediaSubsession(env, False) {}
+  FramedSource* createNewStreamSource(unsigned, unsigned& bitrate) override {
+    bitrate = 64;
+    return AudioSource::createNew(envir());
+  }
+  RTPSink* createNewRTPSink(Groupsock* groupsock, unsigned char payload, FramedSource*) override {
+    return SimpleRTPSink::createNew(envir(), groupsock, payload, 8000,
+      "audio", "PCMU", 1, True, False);
+  }
+private:
+  ~AudioSubsession() override = default;
+};
+
 class H264Subsession final : public OnDemandServerMediaSubsession {
 public:
   static H264Subsession* createNew(UsageEnvironment& env) { return new H264Subsession(env); }
@@ -233,6 +303,7 @@ void serve(unsigned short port, std::string path) {
       "Native H.264 camera stream", True);
     if (session) {
       session->addSubsession(H264Subsession::createNew(*env));
+      session->addSubsession(AudioSubsession::createNew(*env));
       server->addServerMediaSession(session);
     }
   }
@@ -268,6 +339,7 @@ int petcam_start(unsigned short port, const char* path) {
   std::unique_lock<std::mutex> lock(lifecycleMutex);
   if (worker.joinable()) return -1;
   connectedClients.store(0, std::memory_order_relaxed);
+  { std::lock_guard<std::mutex> audioLock(audioQueueMutex); audioQueue.clear(); }
   deliveredNals.store(0, std::memory_order_relaxed);
   for (auto& count : deliveredNalsByType) count.store(0, std::memory_order_relaxed);
   startupDone = false;
@@ -281,6 +353,32 @@ int petcam_start(unsigned short port, const char* path) {
   }
   return startupCode;
 }
+
+int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
+  if (!data || size != 320) return -1; // 160 mono S16_LE samples at 8 kHz (20 ms).
+  std::vector<unsigned char> encoded;
+  encoded.reserve(160);
+  for (std::size_t i = 0; i < size; i += 2) {
+    const int sample = static_cast<int>(static_cast<std::int16_t>(
+      static_cast<unsigned>(data[i]) | (static_cast<unsigned>(data[i + 1]) << 8)));
+    const int sign = sample < 0 ? 0x80 : 0x00;
+    int magnitude = sample < 0 ? -sample : sample;
+    magnitude = std::min(magnitude, 32635) + 0x84;
+    int exponent = 7;
+    for (int mask = 0x4000; exponent > 0 && (magnitude & mask) == 0; mask >>= 1) --exponent;
+    const int mantissa = (magnitude >> (exponent + 3)) & 0x0F;
+    encoded.push_back(static_cast<unsigned char>(~(sign | (exponent << 4) | mantissa)));
+  }
+  std::lock_guard<std::mutex> lock(audioQueueMutex);
+  audioQueue.push_back(std::move(encoded));
+  while (audioQueue.size() > kMaxAudioQueueFrames) audioQueue.pop_front();
+  return 0;
+}
+void petcam_clear_audio() {
+  std::lock_guard<std::mutex> lock(audioQueueMutex);
+  audioQueue.clear();
+}
+
 int petcam_push_nal(const unsigned char* data, std::size_t size, int isIdr) {
   if (!data || size == 0 || size > kMaxNal) return -1;
   const bool nalIsIdr = (data[0] & 0x1F) == 5;
@@ -318,6 +416,7 @@ void petcam_stop() {
   std::lock_guard<std::mutex> lock(queueMutex);
   queue.clear();
   queueBytes = 0;
+  { std::lock_guard<std::mutex> audioLock(audioQueueMutex); audioQueue.clear(); }
   sequence = 1;
 }
 }
