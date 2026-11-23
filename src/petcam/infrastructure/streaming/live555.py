@@ -466,7 +466,7 @@ def run_server(camera_status: dict) -> int:
             try:
                 audio_capture = subprocess.Popen(
                     audio_command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE, bufsize=0,
+                    stderr=subprocess.DEVNULL, bufsize=0,
                 )
             except OSError as error:
                 raise Live555Error(f"Unable to start ALSA microphone capture: {error}") from error
@@ -492,13 +492,9 @@ def run_server(camera_status: dict) -> int:
             if reader_error["message"]:
                 raise Live555Error(reader_error["message"])
             if audio_capture is not None and audio_capture.poll() is not None:
-                detail = ""
-                if audio_capture.stderr is not None:
-                    detail = audio_capture.stderr.read().decode("utf-8", "replace").strip()
-                message = f"ALSA microphone capture exited with status {audio_capture.returncode}."
-                if detail:
-                    message += f" {detail[-1000:]}"
-                raise Live555Error(message)
+                raise Live555Error(
+                    f"ALSA microphone capture exited with status {audio_capture.returncode}."
+                )
             if audio_reader_error["message"]:
                 raise Live555Error(audio_reader_error["message"])
             now = time.monotonic()
@@ -547,8 +543,6 @@ def run_server(camera_status: dict) -> int:
                     audio_capture.wait(timeout=2)
             if audio_capture.stdout is not None:
                 audio_capture.stdout.close()
-            if audio_capture.stderr is not None:
-                audio_capture.stderr.close()
         if audio_reader is not None and audio_reader.is_alive():
             audio_reader.join(timeout=2)
         if capture is not None:
