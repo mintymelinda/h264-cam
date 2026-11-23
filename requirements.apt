@@ -2,8 +2,7 @@
 python3
 python3-gi
 gir1.2-gstreamer-1.0
-gir1.2-gst-plugins-base-1.0
-gstreamer1.0-plugins-base
+libgstreamer-plugins-base1.0-0
 v4l-utils
 rpicam-apps-lite
 avahi-daemon
