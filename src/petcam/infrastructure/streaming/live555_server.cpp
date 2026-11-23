@@ -286,6 +286,7 @@ private:
     double oldestAgeMs = 0.0;
     double selectedAgeMs = 0.0;
     double anchorAgeMs = 0.0;
+    double anchorOffsetMs = 0.0;
     bool selectedStart = false;
     {
       std::lock_guard<std::mutex> lock(audioQueueMutex);
@@ -310,6 +311,8 @@ private:
           const auto now = std::chrono::steady_clock::now();
           anchorAgeMs = std::chrono::duration<double, std::milli>(now - sessionStart_->captureTime).count();
           selectedAgeMs = std::chrono::duration<double, std::milli>(now - start->capturedAt).count();
+          anchorOffsetMs = std::chrono::duration<double, std::milli>(
+            start->capturedAt - sessionStart_->captureTime).count();
         }
         auto it = std::find_if(audioQueue.begin(), audioQueue.end(),
           [this](const AudioFrame& item) { return item.seq >= cursor_; });
@@ -340,8 +343,8 @@ private:
     const double packetAgeMs = std::chrono::duration<double, std::milli>(deliveryNow - capturedAt).count();
     if (selectedStart) {
       std::fprintf(stderr,
-        "PetCam audio sync: session anchor age=%.1fms, selected first packet age=%.1fms\\n",
-        anchorAgeMs, selectedAgeMs);
+        "PetCam audio sync: session anchor age=%.1fms, selected first packet age=%.1fms, offset=%.1fms\\n",
+        anchorAgeMs, selectedAgeMs, anchorOffsetMs);
     }
     if (lastAudioDeliveryLog == std::chrono::steady_clock::time_point{} ||
         deliveryNow - lastAudioDeliveryLog >= std::chrono::seconds(1)) {
@@ -527,7 +530,10 @@ int petcam_start(unsigned short port, const char* path) {
 
 int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
   if (!data || size != kAudioFrameBytes) return -1;
-  const auto capturedAt = std::chrono::steady_clock::now();
+  // arecord emits a period after its final sample arrives; RTP timestamps
+  // describe the first sample in that period, not the pipe-read completion.
+  const auto capturedAt = std::chrono::steady_clock::now() -
+    std::chrono::microseconds(kAudioPacketMs10 * 100);
   std::vector<unsigned char> packet(size);
 
   std::lock_guard<std::mutex> lock(audioQueueMutex);
