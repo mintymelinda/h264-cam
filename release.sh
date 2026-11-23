@@ -33,7 +33,7 @@ xz --test "$IMAGE_PATH"
 (cd "$OUTPUT_DIR" && sha256sum --check "$(basename "$CHECKSUM_PATH")")
 
 log "Inspecting the exact compressed release image and verifying its installed application."
-"$REPO_ROOT/scripts/verify-image-artifact.sh" "$IMAGE_PATH" "$VERSION" "$SOURCE_COMMIT"
+bash "$REPO_ROOT/scripts/verify-image-artifact.sh" "$IMAGE_PATH" "$VERSION" "$SOURCE_COMMIT"
 
 log "Generating the Raspberry Pi Imager OS-list manifest."
 python3 "$REPO_ROOT/create-imager-manifest.py" \
