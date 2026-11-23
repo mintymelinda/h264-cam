@@ -69,3 +69,9 @@ jobs:
             -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment -pthread
           test -s "$RUNNER_TEMP/libpetcam_live555.so"
           ldd "$RUNNER_TEMP/libpetcam_live555.so"
+
+      - name: Test RTSP/TCP video and microphone audio tracks
+        env:
+          PYTHONPATH: src
+          PETCAM_LIVE555_LIBRARY: ${{ runner.temp }}/libpetcam_live555.so
+        run: python3 scripts/check_rtsp_tcp.py --self-test
