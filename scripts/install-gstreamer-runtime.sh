@@ -53,6 +53,8 @@ log "Downloading official GStreamer runtime packages without installing their br
   apt-get download \
     "libgstrtspserver-1.0-0:$architecture" \
     "gir1.2-gst-rtsp-server-1.0:$architecture" \
+    "gstreamer1.0-plugins-base:$architecture" \
+    "gir1.2-gst-plugins-base-1.0:$architecture" \
     "gstreamer1.0-plugins-bad:$architecture" \
     "$codec_library_package:$architecture" \
     "gstreamer1.0-plugins-good:$architecture"
@@ -76,14 +78,19 @@ typelib_deb="$(find_deb gir1.2-gst-rtsp-server-1.0)" || fail "The RTSP server ty
 plugin_deb="$(find_deb gstreamer1.0-plugins-bad)" || fail "The H.264 parser plugin package was not downloaded."
 codec_deb="$(find_deb "$codec_library_package")" || fail "The codec-parser library package was not downloaded."
 rtp_plugin_deb="$(find_deb gstreamer1.0-plugins-good)" || fail "The GStreamer RTP plugin package was not downloaded."
+base_plugin_deb="$(find_deb gstreamer1.0-plugins-base)" || fail "The GStreamer appsrc plugin package was not downloaded."
+base_typelib_deb="$(find_deb gir1.2-gst-plugins-base-1.0)" || fail "The GStreamer base typelib package was not downloaded."
 
 rtsp_version="$(dpkg-deb -f "$rtsp_deb" Version)"
 typelib_version="$(dpkg-deb -f "$typelib_deb" Version)"
 plugin_version="$(dpkg-deb -f "$plugin_deb" Version)"
 codec_version="$(dpkg-deb -f "$codec_deb" Version)"
 rtp_plugin_version="$(dpkg-deb -f "$rtp_plugin_deb" Version)"
+base_plugin_version="$(dpkg-deb -f "$base_plugin_deb" Version)"
+base_typelib_version="$(dpkg-deb -f "$base_typelib_deb" Version)"
 [[ "$rtsp_version" == "$typelib_version" ]] || fail "The RTSP server library and typelib versions do not match."
 [[ "$plugin_version" == "$codec_version" ]] || fail "The H.264 parser plugin and codec-parser library versions do not match."
+[[ "$base_plugin_version" == "$base_typelib_version" ]] || fail "The GStreamer base plugin and typelib versions do not match."
 
 if [[ "$installed_rtsp_status" == "install ok installed" \
   && "$installed_parser_status" == "install ok installed" \
@@ -100,11 +107,15 @@ typelib_root="$work_dir/typelib"
 plugin_root="$work_dir/plugin"
 codec_root="$work_dir/codec"
 rtp_plugin_root="$work_dir/rtp-plugin"
+base_plugin_root="$work_dir/base-plugin"
+base_typelib_root="$work_dir/base-typelib"
 dpkg-deb -x "$rtsp_deb" "$rtsp_root"
 dpkg-deb -x "$typelib_deb" "$typelib_root"
 dpkg-deb -x "$plugin_deb" "$plugin_root"
 dpkg-deb -x "$codec_deb" "$codec_root"
 dpkg-deb -x "$rtp_plugin_deb" "$rtp_plugin_root"
+dpkg-deb -x "$base_plugin_deb" "$base_plugin_root"
+dpkg-deb -x "$base_typelib_deb" "$base_typelib_root"
 
 rtsp_library="$(find "$rtsp_root/usr/lib/$multiarch" -maxdepth 1 -type f \
   -name 'libgstrtspserver-1.0.so.0.*' -print -quit)"
@@ -113,12 +124,16 @@ parser_plugin="$plugin_root/usr/lib/$multiarch/gstreamer-1.0/libgstvideoparsersb
 codec_library="$(find "$codec_root/usr/lib/$multiarch" -maxdepth 1 -type f \
   -name 'libgstcodecparsers-1.0.so.0.*' -print -quit)"
 rtp_plugin="$rtp_plugin_root/usr/lib/$multiarch/gstreamer-1.0/libgstrtp.so"
+app_plugin="$base_plugin_root/usr/lib/$multiarch/gstreamer-1.0/libgstapp.so"
+base_typelib_dir="$base_typelib_root/usr/lib/$multiarch/girepository-1.0"
 
 [[ -s "$rtsp_library" ]] || fail "The RTSP server shared library is missing."
 [[ -s "$rtsp_typelib" ]] || fail "The RTSP server GObject typelib is missing."
 [[ -s "$parser_plugin" ]] || fail "The H.264 video parser plugin is missing."
 [[ -s "$codec_library" ]] || fail "The codec-parser shared library is missing."
 [[ -s "$rtp_plugin" ]] || fail "The RTP payloader plugin is missing."
+[[ -s "$app_plugin" ]] || fail "The GStreamer appsrc plugin is missing."
+[[ -d "$base_typelib_dir" ]] || fail "The GStreamer base typelibs are missing."
 
 # Debian's RTSP server package declares a dependency on the complete plugins-bad
 # bundle even though this application only needs the RTSP server library itself.
@@ -127,12 +142,19 @@ package_root="$work_dir/package"
 install -d -m 0755 \
   "$package_root/DEBIAN" \
   "$package_root/usr/lib/$multiarch/girepository-1.0" \
+  "$package_root/usr/lib/$multiarch/gstreamer-1.0" \
   "$package_root/usr/lib/$multiarch"
 install -m 0644 "$rtsp_library" "$package_root/usr/lib/$multiarch/$(basename "$rtsp_library")"
 ln -s "$(basename "$rtsp_library")" \
   "$package_root/usr/lib/$multiarch/libgstrtspserver-1.0.so.0"
 install -m 0644 "$rtsp_typelib" \
   "$package_root/usr/lib/$multiarch/girepository-1.0/GstRtspServer-1.0.typelib"
+for base_typelib in "$base_typelib_dir"/*.typelib; do
+  [[ -f "$base_typelib" ]] || continue
+  install -m 0644 "$base_typelib" "$package_root/usr/lib/$multiarch/girepository-1.0/"
+done
+install -m 0644 "$app_plugin" \
+  "$package_root/usr/lib/$multiarch/gstreamer-1.0/libgstapp.so"
 cat > "$package_root/DEBIAN/control" <<EOF
 Package: petcam-gstreamer-rtsp-server
 Version: $rtsp_version
@@ -140,10 +162,9 @@ Section: video
 Priority: optional
 Architecture: $architecture
 Maintainer: H264 Cam Project
-Depends: libc6, libglib2.0-0t64 | libglib2.0-0, libgstreamer1.0-0, libgstreamer-plugins-base1.0-0
-Description: Minimal GStreamer RTSP server runtime for H264 Cam
- Contains the official GStreamer RTSP server shared library and typelib,
- with only the shared-library dependencies used by the RTSP server.
+Depends: libc6, libglib2.0-0t64 | libglib2.0-0, libgstreamer1.0-0, libgstreamer-plugins-base1.0-0, gir1.2-gstreamer-1.0
+Description: Minimal GStreamer RTSP server and appsrc runtime for H264 Cam
+ Contains the official RTSP server library, required base typelibs, and appsrc plugin.
 EOF
 
 parser_root="$work_dir/parser-package"
@@ -190,6 +211,10 @@ EOF
 if ldd "$rtsp_library" 2>&1 | grep -Fq "not found"; then
   ldd "$rtsp_library" >&2
   fail "The RTSP server library has unresolved shared-library dependencies."
+fi
+if ldd "$app_plugin" 2>&1 | grep -Fq "not found"; then
+  ldd "$app_plugin" >&2
+  fail "The appsrc plugin has unresolved dependencies."
 fi
 if ldd "$rtp_plugin" 2>&1 | grep -Fq "not found"; then
   ldd "$rtp_plugin" >&2
