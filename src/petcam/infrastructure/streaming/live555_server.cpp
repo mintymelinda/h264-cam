@@ -20,8 +20,14 @@
 
 namespace {
 constexpr std::size_t kMaxNal = 16U * 1024U * 1024U;
-constexpr std::size_t kMaxQueue = 64U * 1024U * 1024U;
-struct Nal { std::uint64_t seq; std::vector<unsigned char> data; bool isIdr; };
+constexpr std::size_t kMaxQueue = 16U * 1024U * 1024U;
+constexpr auto kMaxQueueAge = std::chrono::seconds(3);
+struct Nal {
+  std::uint64_t seq;
+  std::vector<unsigned char> data;
+  bool isIdr;
+  std::chrono::steady_clock::time_point enqueuedAt;
+};
 std::mutex queueMutex, lifecycleMutex;
 std::deque<Nal> queue;
 std::size_t queueBytes = 0;
@@ -279,12 +285,18 @@ int petcam_push_nal(const unsigned char* data, std::size_t size, int isIdr) {
   if (!data || size == 0 || size > kMaxNal) return -1;
   const bool nalIsIdr = (data[0] & 0x1F) == 5;
   if (nalIsIdr != (isIdr != 0)) return -1;
-  Nal item{0, std::vector<unsigned char>(data, data + size), isIdr != 0};
+  const auto now = std::chrono::steady_clock::now();
+  Nal item{0, std::vector<unsigned char>(data, data + size), isIdr != 0, now};
   std::lock_guard<std::mutex> lock(queueMutex);
   item.seq = sequence++;
   queueBytes += item.data.size();
   queue.push_back(std::move(item));
-  while (!queue.empty() && (queueBytes > kMaxQueue || queue.size() > 8192)) {
+  // Retain only a short live window. If a consumer falls behind, its next
+  // read will detect the sequence gap and resume at the next SPS/PPS + IDR.
+  // This prevents a slow RTSP client from watching an ever-older recording.
+  while (!queue.empty() &&
+         (queueBytes > kMaxQueue || queue.size() > 8192 ||
+          petcam::isNalQueueEntryExpired(now, queue.front().enqueuedAt, kMaxQueueAge))) {
     queueBytes -= queue.front().data.size();
     queue.pop_front();
   }

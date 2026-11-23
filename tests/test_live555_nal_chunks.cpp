@@ -1,10 +1,23 @@
 #include "nal_chunk.hpp"
 
 #include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <vector>
 
 int main() {
+  {
+    using Clock = std::chrono::steady_clock;
+    const auto queuedAt = Clock::time_point{} + std::chrono::seconds(10);
+    const auto maxAge = std::chrono::seconds(3);
+    assert(!petcam::isNalQueueEntryExpired(
+      queuedAt + std::chrono::milliseconds(2999), queuedAt, maxAge
+    ));
+    assert(petcam::isNalQueueEntryExpired(
+      queuedAt + std::chrono::seconds(3), queuedAt, maxAge
+    ));
+  }
+
   {
     std::vector<unsigned char> nal(256U * 1024U, 0x55);
     nal[0] = 0x65;

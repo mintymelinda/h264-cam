@@ -3,9 +3,17 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <chrono>
 #include <vector>
 
 namespace petcam {
+
+inline bool isNalQueueEntryExpired(
+    std::chrono::steady_clock::time_point now,
+    std::chrono::steady_clock::time_point enqueuedAt,
+    std::chrono::steady_clock::duration maxAge) {
+  return now - enqueuedAt >= maxAge;
+}
 
 struct NalChunkResult {
   std::size_t size;
