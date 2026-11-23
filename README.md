@@ -1,8 +1,10 @@
 # H264 Cam
 
-H264 Cam serves a camera's native H.264 capture stream over RTSP using Live555. It does
-not decode, transcode, or provide a web interface, motion processing, timelapse, or
-Home Assistant integration.
+H264 Cam serves a camera's native H.264 capture stream over RTSP using Live555. The same
+RTSP session includes a mono PCMU microphone audio track captured through ALSA; automatic
+device selection prefers the Razer Kiyo microphone. PetCam does not decode or transcode
+the video, or provide a web interface, motion processing, timelapse, or Home Assistant
+integration.
 
 ## Supported platform
 
@@ -101,7 +103,17 @@ Optional environment variables can be set before launching `petcam`:
 | `PETCAM_V4L2_CONTROLS` | unset | Optional integer controls passed to `v4l2-ctl --set-ctrl`, e.g. `video_gop_size=30,video_bitrate=6000000` |
 | `PETCAM_CSI_INTRA` | `30` | CSI H.264 I-frame interval in frames |
 | `PETCAM_CSI_BITRATE` | `8000000` | CSI H.264 target bitrate in bits per second |
+| `PETCAM_AUDIO` | `1` | Enable the ALSA microphone audio track; set to `0` to disable it |
+| `PETCAM_AUDIO_DEVICE` | `auto` | ALSA capture device; automatic selection prefers Razer Kiyo, otherwise the first capture device |
 | `PETCAM_LIVE555_FRAMER` | `stream` | Select `stream` (Annex-B byte-stream parser) or experimental `discrete` NAL framing |
+
+To inspect ALSA capture devices manually, run `arecord -l`. Automatic selection chooses
+the Razer Kiyo when it is listed, then falls back to the first available capture device.
+To force a specific ALSA device, set `PETCAM_AUDIO_DEVICE=plughw:1,0` (replace the card
+and device numbers with those shown by `arecord -l`). The ALSA `plughw` device performs
+format/rate conversion when the USB microphone does not natively support 8 kHz. Audio is
+encoded as G.711 μ-law (PCMU), mono at 8 kHz, for low CPU use on the Pi Zero W. Set
+`PETCAM_AUDIO=0` only when video-only output is required.
 
 For example, to test the optional USB controls and a larger capture ring:
 
