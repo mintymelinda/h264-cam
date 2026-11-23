@@ -440,9 +440,6 @@ def run_stream(config: dict, stdscr) -> int:
                 raise RuntimeError("The Live555 H.264 RTSP server stopped unexpectedly.")
             status = _read_status()
             resources = metrics.sample()
-            key = -1
-            if key == -2:
-                pass
             height, width = stdscr.getmaxyx()
             stdscr.erase()
             stdscr.addnstr(0, 0, "PetCam · H.264 RTSP", max(1, width - 1), curses.A_BOLD)
