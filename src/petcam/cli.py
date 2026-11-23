@@ -11,6 +11,7 @@ import math
 import os
 import re
 import subprocess
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -234,7 +235,7 @@ def discover_audio_capabilities() -> dict:
         def limits(prefix):
             line = next((item for item in lines if item.strip().startswith(prefix)), "")
             values = [int(token) for token in line.replace("[", " ").replace("]", " ").split() if token.isdigit()]
-            return (min(values), max(values)) if len(values) >= 2 else None
+            return (min(values), max(values)) if values else None
         rate_limits = limits("RATE:")
         channel_limits = limits("CHANNELS:")
         rates = [rate for rate in (8000, 12000, 16000, 24000, 48000) if rate_limits and rate_limits[0] <= rate <= rate_limits[1]]
