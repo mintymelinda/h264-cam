@@ -131,11 +131,11 @@ class RTSPConnection:
         _, timestamp, _, received_payload_type, payload = self._rtp_payload(packet)
         if received_payload_type != payload_type:
             raise RTSPProbeError(
-                f"Expected dynamic RTP payload type {payload_type} (L16), received {received_payload_type}."
+                f"Expected dynamic RTP payload type {payload_type}, received {received_payload_type}."
             )
         if len(payload) < 2:
             raise RTSPProbeError(
-                f"Expected a non-empty 5 ms L16 packet, received {len(payload)} bytes."
+                f"Expected a non-empty audio packet, received {len(payload)} bytes."
             )
         return len(payload), timestamp
 
@@ -281,7 +281,8 @@ def probe(
         sdp_lines = sdp.decode("utf-8", "replace").splitlines()
         control = None
         audio_control = None
-        l16_payload_type = None
+        audio_payload_type = None
+        audio_codec = None
         audio_payload_types: set[str] = set()
         current_media = None
         for line in sdp_lines:
@@ -302,19 +303,20 @@ def probe(
                 if (
                     separator
                     and payload_field in audio_payload_types
-                    and codec.strip().upper().startswith("L16/")
+                    and codec.strip().upper().split("/", 1)[0] in {"L16", "OPUS"}
                 ):
-                    l16_payload_type = int(payload_field)
+                    audio_payload_type = int(payload_field)
+                    audio_codec = codec.strip().upper().split("/", 1)[0]
 
         if not control:
             raise RTSPProbeError("DESCRIBE SDP did not advertise a video media control URL.")
         if require_audio and (
             not audio_control
-            or l16_payload_type is None
-            or not 96 <= l16_payload_type <= 127
+            or audio_payload_type is None
+            or not 96 <= audio_payload_type <= 127
         ):
             raise RTSPProbeError(
-                "DESCRIBE SDP did not advertise an L16 microphone audio track."
+                "DESCRIBE SDP did not advertise an Opus or Opus or L16 microphone audio track."
             )
         content_base = describe_headers.get("content-base", url.rstrip("/") + "/")
         if not content_base.endswith("/"):
@@ -371,11 +373,11 @@ def probe(
         if expected_nal is not None:
             video_result = connection.wait_for_nal(expected_nal, timeout)
             if require_audio:
-                connection.wait_for_audio(timeout, payload_type=l16_payload_type)
+                connection.wait_for_audio(timeout, payload_type=audio_payload_type)
             return video_result
         channel, packet_size = connection.wait_for_rtp(timeout)
         if require_audio:
-            connection.wait_for_audio(timeout, channel=2, payload_type=l16_payload_type)
+            connection.wait_for_audio(timeout, channel=2, payload_type=audio_payload_type)
         return 1, packet_size, channel
     finally:
         connection.close()
@@ -417,7 +419,7 @@ def probe_audio(url: str, timeout: float = 5.0) -> tuple[int, int]:
                 ):
                     l16_payload_type = int(payload_field)
 
-        if not audio_control or l16_payload_type is None or not 96 <= l16_payload_type <= 127:
+        if not audio_control or l16_payload_type is None or not 96 <= audio_payload_type <= 127:
             raise RTSPProbeError("DESCRIBE SDP did not advertise an L16 microphone audio track.")
 
         content_base = describe_headers.get("content-base", url.rstrip("/") + "/")
@@ -449,7 +451,7 @@ def probe_audio(url: str, timeout: float = 5.0) -> tuple[int, int]:
             raise RTSPProbeError(f"PLAY failed with RTSP status {status}.")
 
         return connection.wait_for_audio(
-            timeout, channel=0, payload_type=l16_payload_type
+            timeout, channel=0, payload_type=audio_payload_type
         )
     finally:
         connection.close()
@@ -464,7 +466,7 @@ def run_self_test(timeout: float) -> tuple[int, int, int]:
         port = listener.getsockname()[1]
 
     server = Live555Server()
-    server.configure_audio({"sample_rate": 48000, "channels": 2, "packet_ms": 5})
+    server.configure_audio({"sample_rate": 48000, "channels": 2, "output_codec": "L16", "packet_ms": 5})
     server.start(port, "/petcam")
     stop_audio = threading.Event()
 
@@ -512,7 +514,7 @@ def main() -> int:
     parser.add_argument(
         "--require-audio",
         action="store_true",
-        help="also require the L16 microphone track and receive an audio RTP packet",
+        help="also require an Opus or L16 microphone track and receive an audio RTP packet",
     )
     args = parser.parse_args()
     if args.timeout <= 0:
@@ -531,7 +533,7 @@ def main() -> int:
         return 1
     if args.self_test:
         print(
-            "RTSP audio self-test PASSED: OPTIONS, DESCRIBE, L16 TCP SETUP, "
+            "RTSP audio self-test PASSED: OPTIONS, DESCRIBE, audio TCP SETUP, "
             f"PLAY, and a live {nal_size}-byte L16 RTP payload (timestamp {timestamp}). "
             "The test uses synthetic audio and does not require a camera or microphone."
         )
