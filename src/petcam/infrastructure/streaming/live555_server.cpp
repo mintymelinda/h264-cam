@@ -22,6 +22,7 @@
 #include <vector>
 #include "nal_chunk.hpp"
 #include "presentation_clock.hpp"
+#include "media_session_start.hpp"
 
 namespace {
 constexpr std::size_t kMaxNal = 16U * 1024U * 1024U;
@@ -37,11 +38,7 @@ struct Nal {
 std::mutex queueMutex, lifecycleMutex;
 std::deque<Nal> queue;
 std::size_t queueBytes = 0;
-struct MediaSessionStart {
-  std::chrono::steady_clock::time_point captureTime;
-};
-std::mutex sessionStartMutex;
-std::map<unsigned, std::weak_ptr<MediaSessionStart>> sessionStarts;
+petcam::MediaSessionStartRegistry sessionStarts;
 std::mutex audioQueueMutex;
 struct AudioFrame {
   std::uint64_t seq;
@@ -101,25 +98,14 @@ NalIterator findRecoveryStartAtOrAfter(std::uint64_t minSequence) {
   return queue.end();
 }
 
-std::shared_ptr<MediaSessionStart> mediaSessionStart(unsigned clientSessionId) {
-  std::lock_guard<std::mutex> sessionLock(sessionStartMutex);
-  auto& weakStart = sessionStarts[clientSessionId];
-  if (auto existing = weakStart.lock()) return existing;
-
-  auto start = std::make_shared<MediaSessionStart>();
-  {
+std::shared_ptr<petcam::MediaSessionStart> mediaSessionStart(unsigned clientSessionId) {
+  return sessionStarts.get(clientSessionId, [] {
     std::lock_guard<std::mutex> queueLock(queueMutex);
     const auto recovery = findLatestRecoveryStart();
-    start->captureTime = recovery == queue.end()
+    return recovery == queue.end()
       ? std::chrono::steady_clock::now()
       : (recovery + 2)->enqueuedAt;
-  }
-  for (auto it = sessionStarts.begin(); it != sessionStarts.end();) {
-    if (it->second.expired() && it->first != clientSessionId) it = sessionStarts.erase(it);
-    else ++it;
-  }
-  weakStart = start;
-  return start;
+  });
 }
 
 NalIterator findRecoveryStartAtOrAfterTime(
@@ -139,12 +125,12 @@ bool useDiscreteFramer() {
 class NalSource final : public FramedSource {
 public:
   static NalSource* createNew(UsageEnvironment& env, bool includeStartCode,
-                              std::shared_ptr<MediaSessionStart> sessionStart) {
+                              std::shared_ptr<petcam::MediaSessionStart> sessionStart) {
     return new NalSource(env, includeStartCode, std::move(sessionStart));
   }
 protected:
   explicit NalSource(UsageEnvironment& env, bool includeStartCode,
-                     std::shared_ptr<MediaSessionStart> sessionStart)
+                     std::shared_ptr<petcam::MediaSessionStart> sessionStart)
     : FramedSource(env), includeStartCode_(includeStartCode),
       sessionStart_(std::move(sessionStart)) {}
   void doGetNextFrame() override {
@@ -291,10 +277,9 @@ private:
       std::lock_guard<std::mutex> lock(audioQueueMutex);
       if (!audioQueue.empty()) {
         if (!cursorSet_) {
-          auto start = std::find_if(audioQueue.begin(), audioQueue.end(),
-            [this](const AudioFrame& item) {
-              return item.capturedAt >= sessionStart_->captureTime;
-            });
+          auto start = petcam::firstAtOrAfter(audioQueue.begin(), audioQueue.end(),
+            sessionStart_->captureTime,
+            [](const AudioFrame& item) { return item.capturedAt; });
           if (start == audioQueue.end()) {
             nextTask() = envir().taskScheduler().scheduleDelayedTask(5000, retry, this);
             return;
