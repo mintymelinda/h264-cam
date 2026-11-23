@@ -43,8 +43,8 @@ constexpr int kAudioChannels = 2;
 constexpr int kAudioFrameSamples = 960; // 20 ms at 48 kHz.
 constexpr std::size_t kAudioFrameBytes =
   static_cast<std::size_t>(kAudioFrameSamples * kAudioChannels * 2);
-constexpr int kAudioBitrate = 64000;
-constexpr int kAudioComplexity = 1;
+constexpr int kAudioBitrate = 128000;
+constexpr int kAudioComplexity = 5;
 OpusEncoder* audioEncoder = nullptr;
 std::uint64_t sequence = 1;
 std::thread worker;
