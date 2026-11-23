@@ -53,7 +53,7 @@ def validate_runtime() -> None:
     if rtsp_server.RTSPServer is None:
         raise GStreamerError("The GStreamer RTSP server binding is unavailable.")
     missing = [
-        name for name in ("appsrc", "h264parse", "queue", "rtph264pay")
+        name for name in ("appsrc", "h264parse", "queue", "rtpbin", "rtph264pay")
         if gst.ElementFactory.find(name) is None
     ]
     if missing:
