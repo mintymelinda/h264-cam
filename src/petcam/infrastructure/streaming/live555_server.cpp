@@ -38,12 +38,12 @@ struct AudioFrame { std::uint64_t seq; std::vector<unsigned char> data; };
 std::deque<AudioFrame> audioQueue;
 std::uint64_t audioSequence = 1;
 constexpr std::size_t kMaxAudioQueueFrames = 100;
-constexpr int kAudioSampleRate = 48000;
-constexpr int kAudioChannels = 2;
-constexpr int kAudioFrameSamples = 960; // 20 ms at 48 kHz.
-constexpr std::size_t kAudioFrameBytes =
-  static_cast<std::size_t>(kAudioFrameSamples * kAudioChannels * 2);
-constexpr int kAudioBitrate = 128000;
+int kAudioSampleRate = 48000;
+int kAudioChannels = 2;
+int kAudioFrameSamples = 960;
+std::size_t kAudioFrameBytes = 3840;
+int kAudioBitrate = 128000;
+int kAudioPacketMs10 = 200;
 constexpr int kAudioComplexity = 5;
 OpusEncoder* audioEncoder = nullptr;
 std::uint64_t sequence = 1;
@@ -260,7 +260,7 @@ private:
     fFrameSize = static_cast<unsigned>(size);
     fNumTruncatedBytes = static_cast<unsigned>(frame.size() - size);
     gettimeofday(&fPresentationTime, nullptr);
-    fDurationInMicroseconds = 20000;
+    fDurationInMicroseconds = static_cast<unsigned>(kAudioPacketMs10 * 100);
     FramedSource::afterGetting(this);
   }
   std::uint64_t cursor_ = 0;
@@ -278,7 +278,7 @@ protected:
   RTPSink* createNewRTPSink(Groupsock* groupsock, unsigned char payload, FramedSource*) override {
     // Use Live555's allocated dynamic payload type; Opus always uses a 48 kHz RTP clock.
     return SimpleRTPSink::createNew(envir(), groupsock, payload,
-      kAudioSampleRate, "audio", "OPUS", kAudioChannels, False, False);
+      48000, "audio", "OPUS", kAudioChannels, False, False);
   }
 private:
   ~AudioSubsession() override = default;
@@ -360,6 +360,23 @@ void serve(unsigned short port, std::string path) {
 }
 
 extern "C" {
+int petcam_configure_audio(int sampleRate, int channels, int bitrate, int packetMs10) {
+  if (worker.joinable()) return -1;
+  if ((sampleRate != 8000 && sampleRate != 12000 && sampleRate != 16000 &&
+       sampleRate != 24000 && sampleRate != 48000) ||
+      (channels != 1 && channels != 2) || bitrate < 6000 || bitrate > 510000 ||
+      (packetMs10 != 25 && packetMs10 != 50 && packetMs10 != 100 &&
+       packetMs10 != 200 && packetMs10 != 400 && packetMs10 != 600)) return -1;
+  const int samples = sampleRate * packetMs10 / 10000;
+  if (samples <= 0 || sampleRate * packetMs10 % 10000 != 0) return -1;
+  kAudioSampleRate = sampleRate;
+  kAudioChannels = channels;
+  kAudioFrameSamples = samples;
+  kAudioFrameBytes = static_cast<std::size_t>(samples * channels * 2);
+  kAudioBitrate = bitrate;
+  kAudioPacketMs10 = packetMs10;
+  return 0;
+}
 int petcam_start(unsigned short port, const char* path) {
   std::unique_lock<std::mutex> lock(lifecycleMutex);
   if (worker.joinable()) return -1;
@@ -429,7 +446,8 @@ int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
   if (encodedSize <= 0) return -1;
   std::vector<unsigned char> packet(encoded.begin(), encoded.begin() + encodedSize);
   audioQueue.push_back(AudioFrame{audioSequence++, std::move(packet)});
-  while (audioQueue.size() > kMaxAudioQueueFrames) audioQueue.pop_front();
+  const auto maxFrames = static_cast<std::size_t>(20000 / kAudioPacketMs10);
+  while (audioQueue.size() > maxFrames) audioQueue.pop_front();
   return 0;
 }
 void petcam_clear_audio() {
