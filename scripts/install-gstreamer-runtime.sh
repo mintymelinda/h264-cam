@@ -201,8 +201,8 @@ if ldd "$rtp_library" 2>&1 | grep -Fq "not found"; then
   ldd "$rtp_library" >&2
   fail "The RTP shared library has unresolved dependencies."
 fi
-if ldd "$rtp_plugin" 2>&1 | grep -Fq "not found"; then
-  ldd "$rtp_plugin" >&2
+if LD_LIBRARY_PATH="$rtp_library_root/usr/lib/$multiarch" ldd "$rtp_plugin" 2>&1 | grep -Fq "not found"; then
+  LD_LIBRARY_PATH="$rtp_library_root/usr/lib/$multiarch" ldd "$rtp_plugin" >&2
   fail "The RTP plugin has unresolved dependencies."
 fi
 if LD_LIBRARY_PATH="$codec_root/usr/lib/$multiarch" ldd "$parser_plugin" 2>&1 | grep -Fq "not found"; then
