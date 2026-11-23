@@ -24,6 +24,8 @@
 #include "media_session_start.hpp"
 
 namespace {
+using petcam::MediaSessionStart;
+
 constexpr std::size_t kMaxNal = 16U * 1024U * 1024U;
 constexpr std::size_t kMaxQueue = 16U * 1024U * 1024U;
 constexpr auto kMaxQueueAge = std::chrono::seconds(3);
