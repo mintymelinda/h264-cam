@@ -50,8 +50,7 @@ log "Downloading official Debian GStreamer runtime packages without installing t
     "gir1.2-gst-rtsp-server-1.0:$architecture" \
     "gstreamer1.0-plugins-bad:$architecture" \
     "libgstreamer-plugins-bad1.0-0:$architecture" \
-    "gstreamer1.0-plugins-good:$architecture" \
-    "libgstreamer-plugins-good1.0-0:$architecture"
+    "gstreamer1.0-plugins-good:$architecture"
 )
 
 find_deb() {
@@ -72,17 +71,14 @@ typelib_deb="$(find_deb gir1.2-gst-rtsp-server-1.0)" || fail "The RTSP server ty
 plugin_deb="$(find_deb gstreamer1.0-plugins-bad)" || fail "The H.264 parser plugin package was not downloaded."
 codec_deb="$(find_deb libgstreamer-plugins-bad1.0-0)" || fail "The codec-parser library package was not downloaded."
 rtp_plugin_deb="$(find_deb gstreamer1.0-plugins-good)" || fail "The GStreamer RTP plugin package was not downloaded."
-rtp_library_deb="$(find_deb libgstreamer-plugins-good1.0-0)" || fail "The GStreamer RTP shared-library package was not downloaded."
 
 rtsp_version="$(dpkg-deb -f "$rtsp_deb" Version)"
 typelib_version="$(dpkg-deb -f "$typelib_deb" Version)"
 plugin_version="$(dpkg-deb -f "$plugin_deb" Version)"
 codec_version="$(dpkg-deb -f "$codec_deb" Version)"
 rtp_plugin_version="$(dpkg-deb -f "$rtp_plugin_deb" Version)"
-rtp_library_version="$(dpkg-deb -f "$rtp_library_deb" Version)"
 [[ "$rtsp_version" == "$typelib_version" ]] || fail "The RTSP server library and typelib versions do not match."
 [[ "$plugin_version" == "$codec_version" ]] || fail "The H.264 parser plugin and codec-parser library versions do not match."
-[[ "$rtp_plugin_version" == "$rtp_library_version" ]] || fail "The RTP plugin and shared-library versions do not match."
 
 if [[ "$installed_rtsp_status" == "install ok installed" \
   && "$installed_parser_status" == "install ok installed" \
@@ -99,13 +95,11 @@ typelib_root="$work_dir/typelib"
 plugin_root="$work_dir/plugin"
 codec_root="$work_dir/codec"
 rtp_plugin_root="$work_dir/rtp-plugin"
-rtp_library_root="$work_dir/rtp-library"
 dpkg-deb -x "$rtsp_deb" "$rtsp_root"
 dpkg-deb -x "$typelib_deb" "$typelib_root"
 dpkg-deb -x "$plugin_deb" "$plugin_root"
 dpkg-deb -x "$codec_deb" "$codec_root"
 dpkg-deb -x "$rtp_plugin_deb" "$rtp_plugin_root"
-dpkg-deb -x "$rtp_library_deb" "$rtp_library_root"
 
 rtsp_library="$(find "$rtsp_root/usr/lib/$multiarch" -maxdepth 1 -type f \
   -name 'libgstrtspserver-1.0.so.0.*' -print -quit)"
@@ -114,15 +108,12 @@ parser_plugin="$plugin_root/usr/lib/$multiarch/gstreamer-1.0/libgstvideoparsersb
 codec_library="$(find "$codec_root/usr/lib/$multiarch" -maxdepth 1 -type f \
   -name 'libgstcodecparsers-1.0.so.0.*' -print -quit)"
 rtp_plugin="$rtp_plugin_root/usr/lib/$multiarch/gstreamer-1.0/libgstrtp.so"
-rtp_library="$(find "$rtp_library_root/usr/lib/$multiarch" -maxdepth 1 -type f \
-  -name 'libgstrtp-1.0.so.0.*' -print -quit)"
 
 [[ -s "$rtsp_library" ]] || fail "The RTSP server shared library is missing."
 [[ -s "$rtsp_typelib" ]] || fail "The RTSP server GObject typelib is missing."
 [[ -s "$parser_plugin" ]] || fail "The H.264 video parser plugin is missing."
 [[ -s "$codec_library" ]] || fail "The codec-parser shared library is missing."
 [[ -s "$rtp_plugin" ]] || fail "The RTP payloader plugin is missing."
-[[ -s "$rtp_library" ]] || fail "The RTP shared library is missing."
 
 # Debian's RTSP server package declares a dependency on the complete plugins-bad
 # bundle even though this application only needs the RTSP server library itself.
@@ -178,8 +169,6 @@ install -d -m 0755 \
   "$rtp_root/usr/lib/$multiarch/gstreamer-1.0" \
   "$rtp_root/usr/lib/$multiarch"
 install -m 0644 "$rtp_plugin" "$rtp_root/usr/lib/$multiarch/gstreamer-1.0/libgstrtp.so"
-install -m 0644 "$rtp_library" "$rtp_root/usr/lib/$multiarch/$(basename "$rtp_library")"
-ln -s "$(basename "$rtp_library")" "$rtp_root/usr/lib/$multiarch/libgstrtp-1.0.so.0"
 cat > "$rtp_root/DEBIAN/control" <<EOF
 Package: petcam-gstreamer-rtp
 Version: $rtp_plugin_version
@@ -197,12 +186,8 @@ if ldd "$rtsp_library" 2>&1 | grep -Fq "not found"; then
   ldd "$rtsp_library" >&2
   fail "The RTSP server library has unresolved shared-library dependencies."
 fi
-if ldd "$rtp_library" 2>&1 | grep -Fq "not found"; then
-  ldd "$rtp_library" >&2
-  fail "The RTP shared library has unresolved dependencies."
-fi
-if LD_LIBRARY_PATH="$rtp_library_root/usr/lib/$multiarch" ldd "$rtp_plugin" 2>&1 | grep -Fq "not found"; then
-  LD_LIBRARY_PATH="$rtp_library_root/usr/lib/$multiarch" ldd "$rtp_plugin" >&2
+if ldd "$rtp_plugin" 2>&1 | grep -Fq "not found"; then
+  ldd "$rtp_plugin" >&2
   fail "The RTP plugin has unresolved dependencies."
 fi
 if LD_LIBRARY_PATH="$codec_root/usr/lib/$multiarch" ldd "$parser_plugin" 2>&1 | grep -Fq "not found"; then
