@@ -182,7 +182,7 @@ def _detect_alsa_capture_device() -> str:
         )
 
     devices = []
-    pattern = re.compile(r"^\\s*card\\s+(\\d+):.*?,\\s*device\\s+(\\d+):")
+    pattern = re.compile(r"^\s*card\s+(\d+):.*?,\s*device\s+(\d+):")
     for line in result.stdout.splitlines():
         match = pattern.search(line)
         if match:
@@ -209,7 +209,7 @@ def build_audio_capture_command() -> list[str] | None:
         raise Live555Error("arecord is missing; install alsa-utils to enable microphone audio.")
 
     device = os.environ.get("PETCAM_AUDIO_DEVICE", "auto").strip()
-    if not device or any(char in device for char in "\\r\\n"):
+    if not device or any(char in device for char in "\r\n"):
         raise Live555Error("PETCAM_AUDIO_DEVICE must be a non-empty ALSA capture device name.")
     if device.lower() == "auto":
         device = _detect_alsa_capture_device()
@@ -491,8 +491,6 @@ def run_server(camera_status: dict) -> int:
                 raise Live555Error(f"Camera capture exited with status {capture.returncode}.")
             if reader_error["message"]:
                 raise Live555Error(reader_error["message"])
-            if audio_reader_error["message"]:
-                raise Live555Error(audio_reader_error["message"])
             if audio_capture is not None and audio_capture.poll() is not None:
                 detail = ""
                 if audio_capture.stderr is not None:
@@ -501,6 +499,8 @@ def run_server(camera_status: dict) -> int:
                 if detail:
                     message += f" {detail[-1000:]}"
                 raise Live555Error(message)
+            if audio_reader_error["message"]:
+                raise Live555Error(audio_reader_error["message"])
             now = time.monotonic()
             elapsed = max(now - previous_sample_at, 0.001)
             publisher_counts = publisher.counter_snapshot()
