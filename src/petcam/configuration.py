@@ -54,7 +54,7 @@ def validate_config(value: dict[str, Any]) -> dict[str, Any]:
     try:
         sample_rate = int(audio.get("sample_rate", 48000))
         channels = int(audio.get("channels", 2))
-        packet_ms = float(audio.get("packet_ms", 20))
+        packet_ms = float(audio.get("packet_ms", 5))
         capture_gain_percent = int(audio.get("capture_gain_percent", 100))
     except (TypeError, ValueError) as error:
         raise ConfigurationError("Audio settings must be numeric.") from error
