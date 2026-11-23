@@ -378,7 +378,7 @@ def guided_configuration(stdscr) -> dict:
                 f"{_camera_label(source, camera)}\n{mode['resolution']} at {mode['fps']:g} FPS · H.264\n"
                 f"Audio: {audio['sample_rate']} Hz, {audio['channels']} ch, "
                 f"{audio['input_format']} -> {audio['output_codec']} "
-                f"{audio['packet_ms']:g} ms, uncompressed\n"
+                f"{audio['packet_ms']:g} ms\n"
                 f"Microphone capture gain: {audio['capture_gain_percent']}%",
                 ["Activate RTSP stream", "Return to capture mode selection"],
             )
