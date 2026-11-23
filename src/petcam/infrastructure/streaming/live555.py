@@ -145,7 +145,7 @@ def build_capture_command(status: dict) -> list[str]:
 class PcmAudioFramer:
     """Turn arbitrary ALSA pipe reads into exact configured L16 PCM frames."""
 
-    def __init__(self, sample_rate: int = 48000, channels: int = 2, packet_ms: float = 20) -> None:
+    def __init__(self, sample_rate: int = 48000, channels: int = 2, packet_ms: float = 5) -> None:
         self.frame_bytes = int(sample_rate * packet_ms / 1000) * channels * 2
         if self.frame_bytes <= 0:
             raise ValueError("Invalid PCM frame configuration.")
@@ -250,7 +250,7 @@ def build_audio_capture_command(camera_status: dict | None = None) -> list[str] 
 
     rate = int(audio.get("sample_rate", 48000))
     channels = int(audio.get("channels", 2))
-    packet_ms = float(audio.get("packet_ms", 20))
+    packet_ms = float(audio.get("packet_ms", 5))
     samples = int(rate * packet_ms / 1000)
     return [
         "arecord", "--quiet", "--device", device,
