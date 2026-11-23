@@ -219,7 +219,7 @@ def configure_audio(stdscr) -> dict:
     rates = [8000, 12000, 16000, 24000, 48000]
     index = select_menu(stdscr, "Step 4 · Audio sample rate",
         "Choose an Opus-compatible ALSA capture rate.",
-        ["8 kHz", "12 kHz", "16 kHz", "24 kHz", "48 kHz"])
+        [str(rate // 1000) + " kHz" for rate in rates])
     if index is None:
         raise KeyboardInterrupt
     sample_rate = rates[index]
@@ -229,21 +229,34 @@ def configure_audio(stdscr) -> dict:
     if index is None:
         raise KeyboardInterrupt
     channels = index + 1
+    index = select_menu(stdscr, "Step 6 · Input codec",
+        "The capture path accepts signed 16-bit PCM; ALSA plug performs hardware conversion.",
+        ["S16_LE PCM"])
+    if index is None:
+        raise KeyboardInterrupt
+    input_format = "S16_LE"
+    index = select_menu(stdscr, "Step 7 · Output codec",
+        "Opus is the currently implemented RTSP audio codec.",
+        ["Opus"])
+    if index is None:
+        raise KeyboardInterrupt
+    output_codec = "OPUS"
     bitrates = [64000, 96000, 128000, 160000, 192000, 256000]
-    index = select_menu(stdscr, "Step 6 · Opus output bitrate",
+    index = select_menu(stdscr, "Step 8 · Output bitrate",
         "Select the encoded network bitrate.",
         [str(rate // 1000) + " kbit/s" for rate in bitrates])
     if index is None:
         raise KeyboardInterrupt
+    bitrate = bitrates[index]
     durations = [2.5, 5, 10, 20, 40, 60]
-    index = select_menu(stdscr, "Step 7 · Opus packet duration",
+    index = select_menu(stdscr, "Step 9 · Opus packet duration",
         "20 ms is the default. Only legal Opus packet durations are offered.",
         [str(duration) + " ms" for duration in durations])
     if index is None:
         raise KeyboardInterrupt
     return {"sample_rate": sample_rate, "channels": channels,
-            "input_format": "S16_LE", "output_codec": "OPUS",
-            "bitrate": bitrates[2 if index < 0 else 2], "packet_ms": durations[index]}
+            "input_format": input_format, "output_codec": output_codec,
+            "bitrate": bitrate, "packet_ms": durations[index]}
 
 
 def guided_configuration(stdscr) -> dict:
