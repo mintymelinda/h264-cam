@@ -222,7 +222,8 @@ def discover_audio_capabilities() -> dict:
         return fallback
     try:
         listing = subprocess.run(["arecord", "-l"], capture_output=True, text=True, timeout=5)
-        device_match = next((line for line in listing.stdout.splitlines() if "card " in line and ", device " in line), "")
+        device_lines = [line for line in listing.stdout.splitlines() if "card " in line and ", device " in line]
+        device_match = next((line for line in device_lines if "kiyo" in line.lower() or "razer" in line.lower()), device_lines[0] if device_lines else "")
         if listing.returncode != 0 or not device_match:
             return fallback
         card_part = device_match.split("card ", 1)[1].split(":", 1)[0]
@@ -238,7 +239,8 @@ def discover_audio_capabilities() -> dict:
         channel_limits = limits("CHANNELS:")
         rates = [rate for rate in (8000, 12000, 16000, 24000, 48000) if rate_limits and rate_limits[0] <= rate <= rate_limits[1]]
         channels = [count for count in (1, 2) if channel_limits and channel_limits[0] <= count <= channel_limits[1]]
-        return {"sample_rates": rates or fallback["sample_rates"], "channels": channels or fallback["channels"]}
+        return {"sample_rates": rates or fallback["sample_rates"], "channels": channels or fallback["channels"],
+                "device": "plughw:" + card_part + "," + device_part}
     except (OSError, subprocess.TimeoutExpired):
         return fallback
 
@@ -284,7 +286,8 @@ def configure_audio(stdscr) -> dict:
         raise KeyboardInterrupt
     return {"sample_rate": sample_rate, "channels": channels,
             "input_format": input_format, "output_codec": output_codec,
-            "bitrate": bitrate, "packet_ms": durations[index]}
+            "bitrate": bitrate, "packet_ms": durations[index],
+            "device": capabilities.get("device", "auto")}
 
 
 def guided_configuration(stdscr) -> dict:
