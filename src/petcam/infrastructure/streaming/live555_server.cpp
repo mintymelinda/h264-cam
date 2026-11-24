@@ -71,6 +71,7 @@ int startupCode = -1;
 std::string startupMessage;
 std::atomic<unsigned> connectedClients{0};
 std::atomic<unsigned long long> deliveredNals{0};
+std::atomic<unsigned long long> audioFramesHandedToSink{0};
 std::array<std::atomic<unsigned long long>, 32> deliveredNalsByType{};
 
 using NalIterator = std::deque<Nal>::iterator;
@@ -210,8 +211,11 @@ private:
       if (recovery != queue.end()) {
         // If the original recovery point aged out before PLAY, move the shared
         // anchor to the actual recovery point this video source can deliver.
-        sessionStart_->captureTime = (recovery + 2)->enqueuedAt;
-        sessionStart_->videoStartReady = true;
+        {
+          std::lock_guard<std::mutex> sessionLock(sessionStart_->mutex);
+          sessionStart_->captureTime = (recovery + 2)->enqueuedAt;
+          sessionStart_->videoStartReady = true;
+        }
         cursor_ = recovery->seq;
         cursorSet_ = true;
       }
@@ -323,10 +327,13 @@ private:
       queuedFrames = audioQueue.size();
       const auto now = std::chrono::steady_clock::now();
       packetAgeMs = std::chrono::duration<double, std::milli>(now - capturedAt).count();
-      if (sessionStart_->videoStartReady) {
-        videoAnchorAvailable = true;
-        videoOffsetMs = std::chrono::duration<double, std::milli>(
-          capturedAt - sessionStart_->captureTime).count();
+      {
+        std::lock_guard<std::mutex> sessionLock(sessionStart_->mutex);
+        if (sessionStart_->videoStartReady) {
+          videoAnchorAvailable = true;
+          videoOffsetMs = std::chrono::duration<double, std::milli>(
+            capturedAt - sessionStart_->captureTime).count();
+        }
       }
     }
 
@@ -354,11 +361,16 @@ private:
         deliveryNow - lastAudioDeliveryLog >= std::chrono::seconds(1)) {
       lastAudioDeliveryLog = deliveryNow;
       std::fprintf(stderr,
-        "PetCam audio delivery: packet age=%.1fms, queue depth=%zu\\n",
+        "PetCam audio source handoff: frames=%llu, packet age=%.1fms, queue depth=%zu\\n",
+        audioFramesHandedToSink.load(std::memory_order_relaxed) + 1,
         packetAgeMs, queuedFrames);
     }
+    // Capture timestamps keep audio on the shared A/V RTP timeline. The
+    // source is already driven at the ALSA packet cadence; adding a frame
+    // duration here applies a second pacing delay in Live555.
     fPresentationTime = presentationClock.toTimeval(capturedAt);
-    fDurationInMicroseconds = static_cast<unsigned>(kAudioPacketMs10 * 100);
+    fDurationInMicroseconds = 0;
+    audioFramesHandedToSink.fetch_add(1, std::memory_order_relaxed);
     FramedSource::afterGetting(this);
   }
   std::uint64_t cursor_ = 0;
@@ -519,6 +531,7 @@ int petcam_start(unsigned short port, const char* path) {
     }
   }
   deliveredNals.store(0, std::memory_order_relaxed);
+  audioFramesHandedToSink.store(0, std::memory_order_relaxed);
   for (auto& count : deliveredNalsByType) count.store(0, std::memory_order_relaxed);
   startupDone = false;
   startupCode = -1;
