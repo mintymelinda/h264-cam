@@ -703,9 +703,9 @@ def main(argv: list[str] | None = None) -> int:
         prog="petcam",
         description="Configure a USB or CSI camera and serve its native H.264 stream over RTSP.",
         epilog=(
-            'Examples:\\n'
-            '  petcam                 # show the saved stream status\\n'
-            '  petcam --configure     # choose a new camera or audio mode\\n'
+            'Examples:\n'
+            '  petcam                 # show the saved stream status\n'
+            '  petcam --configure     # choose a new camera or audio mode\n'
             '  petcam -c "USB;1920x1080;30"'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
