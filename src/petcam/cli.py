@@ -565,6 +565,7 @@ def activate_stream_service(*, restart: bool = False) -> None:
     action = "restart" if restart else "start"
     _run_service_command(["systemctl", action, "petcam.service"])
 
+
 def run_stream(config: dict, stdscr, *, reconfigure: bool = False) -> int:
     """Manage the persistent stream; leaving this screen never stops RTSP."""
     RUN_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
