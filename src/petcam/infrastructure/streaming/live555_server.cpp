@@ -369,7 +369,9 @@ private:
     // source is already driven at the ALSA packet cadence; adding a frame
     // duration here applies a second pacing delay in Live555.
     fPresentationTime = presentationClock.toTimeval(capturedAt);
-    fDurationInMicroseconds = 0;
+    // Pace the RTP sink at the configured capture packet duration. Without
+    // this, Live555 can drain queued frames faster than ALSA produces them.
+    fDurationInMicroseconds = static_cast<unsigned>(kAudioPacketMs10 * 100);
     audioFramesHandedToSink.fetch_add(1, std::memory_order_relaxed);
     FramedSource::afterGetting(this);
   }
