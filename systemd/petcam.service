@@ -1,0 +1,25 @@
+[Unit]
+Description=PetCam persistent Live555 H.264 RTSP camera service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/petcam
+Environment=PYTHONPATH=/opt/petcam/src
+Environment=PETCAM_CONFIG=/etc/petcam/config.json
+Environment=PETCAM_RUN=/run/petcam
+Environment=PETCAM_STREAM_LOG=/var/log/petcam/stream.log
+RuntimeDirectory=petcam
+RuntimeDirectoryMode=0755
+UMask=0022
+ExecStart=/usr/bin/python3 -m petcam.infrastructure.streaming.live555
+Restart=always
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=15
+StandardOutput=append:/var/log/petcam/stream.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target
