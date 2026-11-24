@@ -13,6 +13,7 @@ import re
 import subprocess
 import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -529,10 +530,11 @@ def _run_service_command(arguments: list[str]) -> None:
 def save_stream_configuration(config: dict, path: Path | None = None) -> None:
     """Persist the selected camera mode for the boot-time service."""
     target = path or CONFIG_FILE
-    temporary = target.with_name(target.name + f".{os.getpid()}.tmp")
+    temporary_fd, temporary_name = tempfile.mkstemp(prefix="petcam-config-", suffix=".json")
+    temporary = Path(temporary_name)
     try:
-        temporary.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-        temporary.write_text(json.dumps(config, indent=2) + "\\n", encoding="utf-8")
+        with os.fdopen(temporary_fd, "w", encoding="utf-8") as output:
+            output.write(json.dumps(config, indent=2) + "\\n")
         if os.geteuid() == 0:
             subprocess.run(
                 ["/usr/bin/install", "-D", "-m", "0644", str(temporary), str(target)],
@@ -546,7 +548,6 @@ def save_stream_configuration(config: dict, path: Path | None = None) -> None:
         raise RuntimeError(f"Unable to save camera configuration to {target}: {error}") from error
     finally:
         temporary.unlink(missing_ok=True)
-
 
 def activate_stream_service() -> None:
     """Enable service at boot and restart it to apply the saved configuration."""
