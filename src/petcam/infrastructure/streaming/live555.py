@@ -22,7 +22,7 @@ from ..camera.discovery import detect_hardware_h264_encoder
 from ..camera.h264 import AnnexBNalFramer, H264FramingError, first_mb_in_slice
 from ..system.hostname import advertised_hostname
 
-RUN_DIR = Path(os.environ.get("PETCAM_RUN", f"/tmp/petcam-{os.getuid()}"))
+RUN_DIR = Path(os.environ.get("PETCAM_RUN", "/run/petcam"))
 CAMERA_STATUS = RUN_DIR / "camera-status.json"
 STREAM_STATUS = RUN_DIR / "stream-status.json"
 CONFIG_FILE = Path(os.environ.get("PETCAM_CONFIG", "/etc/petcam/config.json"))
