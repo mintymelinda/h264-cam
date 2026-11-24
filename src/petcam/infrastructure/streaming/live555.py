@@ -465,7 +465,8 @@ def write_status(
     rtsp_source_nals_by_type: dict[str, int] | None = None,
     audio_diagnostics: dict | None = None,
 ) -> None:
-    RUN_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    RUN_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
+    os.chmod(RUN_DIR, 0o755)
     payload = {
         "state": state,
         "source": source.get("backend"),
