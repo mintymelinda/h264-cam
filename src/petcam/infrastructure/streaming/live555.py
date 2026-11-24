@@ -6,6 +6,8 @@ from __future__ import annotations
 import ctypes
 import json
 import logging
+import math
+import struct
 from collections import Counter
 import os
 import re
@@ -427,6 +429,7 @@ def write_status(
     captured_nals_by_type: dict[str, int] | None = None,
     queued_nals_by_type: dict[str, int] | None = None,
     rtsp_source_nals_by_type: dict[str, int] | None = None,
+    audio_diagnostics: dict | None = None,
 ) -> None:
     RUN_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     payload = {
@@ -441,6 +444,7 @@ def write_status(
         "captured_nals_by_type": captured_nals_by_type or {},
         "queued_nals_by_type": queued_nals_by_type or {},
         "rtsp_source_nals_by_type": rtsp_source_nals_by_type or {},
+        "audio": audio_diagnostics or {},
         "updated_at": time.time(),
         "message": message,
     }
@@ -460,6 +464,8 @@ def run_server(camera_status: dict) -> int:
     first_idr = threading.Event()
     reader_error = {"message": ""}
     audio_reader_error = {"message": ""}
+    audio_metrics_lock = threading.Lock()
+    audio_metrics = {"capture_frames": 0, "native_accepted_frames": 0, "pcm_bytes": 0, "rms": 0.0, "peak": 0, "minimum": 0, "maximum": 0, "last_frame_at": None, "pending_bytes": 0}
     publisher = H264Publisher(server)
     framer_mode = os.environ.get("PETCAM_LIVE555_FRAMER", "stream").strip().lower()
     if framer_mode not in {"stream", "discrete"}:
@@ -503,7 +509,29 @@ def run_server(camera_status: dict) -> int:
                         audio_reader_error["message"] = "ALSA microphone capture stopped unexpectedly."
                     break
                 for frame in framer.feed(chunk):
+                    count = 0
+                    sum_squares = 0
+                    peak = 0
+                    minimum = 32767
+                    maximum = -32768
+                    for item in struct.iter_unpack("<h", frame):
+                        sample = item[0]
+                        count += 1
+                        sum_squares += sample * sample
+                        peak = max(peak, abs(sample))
+                        minimum = min(minimum, sample)
+                        maximum = max(maximum, sample)
                     server.push_audio_pcm(frame)
+                    with audio_metrics_lock:
+                        audio_metrics["capture_frames"] += 1
+                        audio_metrics["native_accepted_frames"] += 1
+                        audio_metrics["pcm_bytes"] += len(frame)
+                        audio_metrics["rms"] = round(math.sqrt(sum_squares / max(count, 1)), 1)
+                        audio_metrics["peak"] = peak
+                        audio_metrics["minimum"] = minimum
+                        audio_metrics["maximum"] = maximum
+                        audio_metrics["last_frame_at"] = time.time()
+                        audio_metrics["pending_bytes"] = len(framer._pending)
         except (OSError, Live555Error) as error:
             if not stop_reader.is_set():
                 audio_reader_error["message"] = str(error)
@@ -515,6 +543,7 @@ def run_server(camera_status: dict) -> int:
     previous_queued_count = 0
     previous_nal_count = 0
     previous_sample_at = started_at
+    previous_audio_frames = 0
     try:
         audio = camera_status.get("audio", {})
         server.configure_audio(audio)
@@ -580,6 +609,25 @@ def run_server(camera_status: dict) -> int:
             previous_queued_count = queued_count
             previous_nal_count = nal_count
             previous_sample_at = now
+            with audio_metrics_lock:
+                audio_snapshot = dict(audio_metrics)
+            audio_rate = (audio_snapshot["native_accepted_frames"] - previous_audio_frames) / elapsed
+            previous_audio_frames = audio_snapshot["native_accepted_frames"]
+            audio_snapshot["frames_per_second"] = round(audio_rate, 1)
+            audio_snapshot["capture_device"] = audio_command[audio_command.index("--device") + 1] if audio_command else None
+            audio_snapshot["capture_command"] = audio_command
+            audio_snapshot["capture_process_running"] = audio_capture is not None and audio_capture.poll() is None
+            audio_snapshot["gain_percent"] = int(audio.get("capture_gain_percent", 100))
+            audio_snapshot["codec"] = str(audio.get("output_codec", "OPUS")).upper()
+            audio_snapshot["sample_rate"] = int(audio.get("sample_rate", 48000))
+            audio_snapshot["channels"] = int(audio.get("channels", 2))
+            logging.info(
+                "Audio diagnostic: device=%s running=%s frames/s=%.1f accepted=%d RMS=%s peak=%s range=[%s,%s] pending=%sB",
+                audio_snapshot["capture_device"], audio_snapshot["capture_process_running"],
+                audio_rate, audio_snapshot["native_accepted_frames"], audio_snapshot["rms"],
+                audio_snapshot["peak"], audio_snapshot["minimum"], audio_snapshot["maximum"],
+                audio_snapshot["pending_bytes"],
+            )
             status_metrics = {
                 "rtsp_clients": server.client_count(),
                 "captured_nals_per_second": captured_rate,
@@ -588,6 +636,7 @@ def run_server(camera_status: dict) -> int:
                 "captured_nals_by_type": captured_by_type,
                 "queued_nals_by_type": queued_by_type,
                 "rtsp_source_nals_by_type": source_by_type,
+                "audio_diagnostics": audio_snapshot,
             }
             if first_idr.is_set():
                 write_status("ready", camera_status, **status_metrics)
