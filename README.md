@@ -43,8 +43,8 @@ independently of the terminal interface. It is enabled for subsequent Pi boots. 
 The service keeps the RTSP listener and existing RTSP sessions alive while it retries
 camera capture after device disconnects or capture-process failures. Recovery waits for a
 fresh SPS/PPS plus IDR sequence before video resumes. Microphone capture has its own retry
-loop, so an audio-device outage does not stop video or the RTSP listener. Re-running
-`petcam` lets you select a new mode; saving a changed configuration restarts the service
+loop, so an audio-device outage does not stop video or the RTSP listener. Re-running `petcam` opens the saved stream status without restarting it. Use
+`petcam --configure` to select a new mode; saving changed settings restarts the service
 to apply the selected audio-track and camera settings.
 
 Useful service commands:
