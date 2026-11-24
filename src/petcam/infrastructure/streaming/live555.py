@@ -298,6 +298,8 @@ class Live555Server:
         self.library.petcam_client_count.restype = ctypes.c_uint
         self.library.petcam_nal_count.argtypes = []
         self.library.petcam_nal_count.restype = ctypes.c_ulonglong
+        self.library.petcam_audio_handoff_count.argtypes = []
+        self.library.petcam_audio_handoff_count.restype = ctypes.c_ulonglong
         self.library.petcam_nal_type_count.argtypes = [ctypes.c_uint]
         self.library.petcam_nal_type_count.restype = ctypes.c_ulonglong
 
@@ -341,6 +343,9 @@ class Live555Server:
 
     def nal_count(self) -> int:
         return int(self.library.petcam_nal_count())
+
+    def audio_handoff_count(self) -> int:
+        return int(self.library.petcam_audio_handoff_count())
 
     def nal_type_counts(self) -> dict[str, int]:
         return {
@@ -621,6 +626,7 @@ def run_server(camera_status: dict) -> int:
             audio_snapshot["codec"] = str(audio.get("output_codec", "OPUS")).upper()
             audio_snapshot["sample_rate"] = int(audio.get("sample_rate", 48000))
             audio_snapshot["channels"] = int(audio.get("channels", 2))
+            audio_snapshot["live555_source_handoffs"] = server.audio_handoff_count()
             logging.info(
                 "Audio diagnostic: device=%s running=%s frames/s=%.1f accepted=%d RMS=%s peak=%s range=[%s,%s] pending=%sB",
                 audio_snapshot["capture_device"], audio_snapshot["capture_process_running"],
