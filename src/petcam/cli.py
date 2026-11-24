@@ -433,6 +433,8 @@ def _audio_capture_mode_label(audio: dict) -> str:
 
 def _audio_framing_label(audio: dict) -> str:
     """Show the selected codec packet duration and RTP clock."""
+    if audio.get("enabled", True) is False:
+        return "Audio: Disabled"
     sample_rate = int(audio.get("sample_rate", 48000))
     packet_ms = float(audio.get("packet_ms", 20))
     codec = str(audio.get("output_codec", "OPUS")).upper()
