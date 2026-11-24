@@ -10,6 +10,7 @@
 namespace petcam {
 
 struct MediaSessionStart {
+  std::mutex mutex;
   std::chrono::steady_clock::time_point captureTime;
   bool videoStartReady = false;
 };
