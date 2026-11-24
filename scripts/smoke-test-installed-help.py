@@ -8,20 +8,22 @@ import subprocess
 import sys
 
 LAUNCHER = "/usr/local/bin/petcam"
-EXPECTED_STDOUT = """usage: petcam [-h] [-c SOURCE;RESOLUTION;FPS]
+EXPECTED_STDOUT = """usage: petcam [-h] [-c SOURCE;RESOLUTION;FPS] [--configure]
 
 Configure a USB or CSI camera and serve its native H.264 stream over RTSP.
 
 options:
   -h, --help            show this help message and exit
   -c SOURCE;RESOLUTION;FPS
-                        skip the guided setup (for example: -c
+                        apply a camera mode directly (for example: -c
                         "USB;1920x1080;30")
+  --configure           run guided setup and apply a new persistent stream
+                        configuration
 
 Examples:
-  petcam
+  petcam                 # show the saved stream status
+  petcam --configure     # choose a new camera or audio mode
   petcam -c "USB;1920x1080;30"
-  petcam -c "USB;1280x720;30"
 """
 
 
