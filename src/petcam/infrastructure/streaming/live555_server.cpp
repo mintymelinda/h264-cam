@@ -51,6 +51,7 @@ std::deque<AudioFrame> audioQueue;
 std::uint64_t audioSequence = 1;
 std::chrono::steady_clock::time_point lastAudioPushLog{};
 std::chrono::steady_clock::time_point lastAudioDeliveryLog{};
+bool kAudioEnabled = true;
 int kAudioSampleRate = 48000;
 int kAudioChannels = 2;
 int kAudioCodec = 1;  // 0 = L16, 1 = Opus
@@ -448,7 +449,8 @@ void serve(unsigned short port, std::string path) {
       "Native H.264 camera stream", True);
     if (session) {
       session->addSubsession(H264Subsession::createNew(*env));
-      session->addSubsession(AudioSubsession::createNew(*env));
+      if (kAudioEnabled)
+        session->addSubsession(AudioSubsession::createNew(*env));
       server->addServerMediaSession(session);
     }
   }
@@ -481,8 +483,10 @@ void serve(unsigned short port, std::string path) {
 }
 
 extern "C" {
-int petcam_configure_audio(int sampleRate, int channels, int codec, int bitrate, int packetMs10) {
-  if (worker.joinable()) return -1;
+int petcam_configure_audio(int sampleRate, int channels, int codec, int bitrate, int packetMs10, int enabled) {
+  if (worker.joinable() || (enabled != 0 && enabled != 1)) return -1;
+  kAudioEnabled = enabled != 0;
+  if (!kAudioEnabled) return 0;
   if ((sampleRate != 8000 && sampleRate != 12000 && sampleRate != 16000 &&
        sampleRate != 24000 && sampleRate != 48000) ||
       (channels != 1 && channels != 2) || (codec != 0 && codec != 1)) return -1;
@@ -512,7 +516,7 @@ int petcam_start(unsigned short port, const char* path) {
       opus_encoder_destroy(audioEncoder);
       audioEncoder = nullptr;
     }
-    if (kAudioCodec == 1) {
+    if (kAudioEnabled && kAudioCodec == 1) {
       int opusError = OPUS_OK;
       audioEncoder = opus_encoder_create(
         kAudioSampleRate, kAudioChannels, OPUS_APPLICATION_AUDIO, &opusError
@@ -548,7 +552,7 @@ int petcam_start(unsigned short port, const char* path) {
 }
 
 int petcam_push_audio_pcm(const unsigned char* data, std::size_t size) {
-  if (!data || size != kAudioFrameBytes) return -1;
+  if (!kAudioEnabled || !data || size != kAudioFrameBytes) return -1;
   // arecord emits a period after its final sample arrives; RTP timestamps
   // describe the first sample in that period, not the pipe-read completion.
   const auto capturedAt = std::chrono::steady_clock::now() -
