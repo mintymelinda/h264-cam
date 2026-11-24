@@ -549,17 +549,28 @@ def save_stream_configuration(config: dict, path: Path | None = None) -> None:
     finally:
         temporary.unlink(missing_ok=True)
 
-def activate_stream_service() -> None:
-    """Enable service at boot and restart it to apply the saved configuration."""
+def load_saved_stream_configuration(path: Path | None = None) -> dict | None:
+    """Return the validated last-used camera configuration, if present."""
+    target = path or CONFIG_FILE
+    try:
+        value = json.loads(target.read_text(encoding="utf-8"))
+        return validate_config(value)
+    except (OSError, ValueError, TypeError, ConfigurationError):
+        return None
+
+
+def activate_stream_service(*, restart: bool = False) -> None:
+    """Enable the service at boot; restart only when applying changed settings."""
     _run_service_command(["systemctl", "enable", "petcam.service"])
-    _run_service_command(["systemctl", "restart", "petcam.service"])
+    action = "restart" if restart else "start"
+    _run_service_command(["systemctl", action, "petcam.service"])
 
-
-def run_stream(config: dict, stdscr) -> int:
+def run_stream(config: dict, stdscr, *, reconfigure: bool = False) -> int:
     """Manage the persistent stream; leaving this screen never stops RTSP."""
     RUN_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
-    save_stream_configuration(config)
-    activate_stream_service()
+    if reconfigure:
+        save_stream_configuration(config)
+    activate_stream_service(restart=reconfigure)
 
     url = f"rtsp://{advertised_hostname()}:{RTSP_PORT}{RTSP_PATH}"
     metrics = ResourceMetrics()
@@ -673,10 +684,17 @@ def run_stream(config: dict, stdscr) -> int:
             _show_log_viewer(stdscr)
             stdscr.timeout(1000)
 
-def _terminal_main(stdscr, config: dict | None) -> int:
+def _terminal_main(
+    stdscr, config: dict | None, *, force_configure: bool = False
+) -> int:
     curses.curs_set(0)
-    selected = config if config is not None else guided_configuration(stdscr)
-    return run_stream(selected, stdscr)
+    if config is not None:
+        return run_stream(config, stdscr, reconfigure=True)
+    saved = None if force_configure else load_saved_stream_configuration()
+    if saved is not None:
+        return run_stream(saved, stdscr)
+    selected = guided_configuration(stdscr)
+    return run_stream(selected, stdscr, reconfigure=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -684,16 +702,20 @@ def main(argv: list[str] | None = None) -> int:
         prog="petcam",
         description="Configure a USB or CSI camera and serve its native H.264 stream over RTSP.",
         epilog=(
-            'Examples:\n'
-            '  petcam\n'
-            '  petcam -c "USB;1920x1080;30"\n'
-            '  petcam -c "USB;1280x720;30"'
+            'Examples:\\n'
+            '  petcam                 # show the saved stream status\\n'
+            '  petcam --configure     # choose a new camera or audio mode\\n'
+            '  petcam -c "USB;1920x1080;30"'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "-c", metavar="SOURCE;RESOLUTION;FPS", dest="shortcut",
-        help="skip the guided setup (for example: -c \"USB;1920x1080;30\")",
+        help="apply a camera mode directly (for example: -c \\"USB;1920x1080;30\\")",
+    )
+    parser.add_argument(
+        "--configure", action="store_true",
+        help="run guided setup and apply a new persistent stream configuration",
     )
     args = parser.parse_args(argv)
 
@@ -701,7 +723,9 @@ def main(argv: list[str] | None = None) -> int:
         config = resolve_shortcut(args.shortcut) if args.shortcut else None
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise RuntimeError("The PetCam configuration and status interface requires an interactive SSH terminal.")
-        return curses.wrapper(_terminal_main, config)
+        return curses.wrapper(
+            _terminal_main, config, force_configure=args.configure
+        )
     except (ConfigurationError, RuntimeError, OSError) as error:
         print(f"petcam: {error}", file=sys.stderr)
         return 1
