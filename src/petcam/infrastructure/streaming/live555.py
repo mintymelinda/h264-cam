@@ -628,9 +628,9 @@ def run_server(camera_status: dict) -> int:
             audio_snapshot["channels"] = int(audio.get("channels", 2))
             audio_snapshot["live555_source_handoffs"] = server.audio_handoff_count()
             logging.info(
-                "Audio diagnostic: device=%s running=%s frames/s=%.1f accepted=%d RMS=%s peak=%s range=[%s,%s] pending=%sB",
+                "Audio diagnostic: device=%s running=%s frames/s=%.1f accepted=%d handoffs=%d RMS=%s peak=%s range=[%s,%s] pending=%sB",
                 audio_snapshot["capture_device"], audio_snapshot["capture_process_running"],
-                audio_rate, audio_snapshot["native_accepted_frames"], audio_snapshot["rms"],
+                audio_rate, audio_snapshot["native_accepted_frames"], audio_snapshot["live555_source_handoffs"], audio_snapshot["rms"],
                 audio_snapshot["peak"], audio_snapshot["minimum"], audio_snapshot["maximum"],
                 audio_snapshot["pending_bytes"],
             )
