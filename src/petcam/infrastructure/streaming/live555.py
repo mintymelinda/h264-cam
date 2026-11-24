@@ -254,11 +254,14 @@ def build_audio_capture_command(camera_status: dict | None = None) -> list[str] 
     channels = int(audio.get("channels", 2))
     packet_ms = float(audio.get("packet_ms", 20))
     samples = int(rate * packet_ms / 1000)
+    # Keep packetization at the selected duration while giving ALSA enough
+    # hardware-buffer headroom to survive short Linux scheduling stalls.
+    buffer_periods = _environment_integer("PETCAM_AUDIO_BUFFER_PERIODS", 20, 4, 64)
     return [
         "arecord", "--quiet", "--device", device,
         "--format", "S16_LE", "--rate", str(rate), "--channels", str(channels),
         "--file-type", "raw", "--period-size", str(samples),
-        "--buffer-size", str(samples * 4),
+        "--buffer-size", str(samples * buffer_periods),
     ]
 
 
@@ -577,7 +580,13 @@ def run_server(camera_status: dict) -> int:
                 target=read_audio_capture, args=(audio,), name="petcam-audio-capture", daemon=True
             )
             audio_reader.start()
-            logging.info("Microphone audio enabled with command: %s", " ".join(audio_command))
+            logging.info(
+                "Microphone audio enabled: ALSA buffer=%d periods (%.1fms), packet=%sms; command: %s",
+                _environment_integer("PETCAM_AUDIO_BUFFER_PERIODS", 20, 4, 64),
+                float(audio["packet_ms"]) * _environment_integer("PETCAM_AUDIO_BUFFER_PERIODS", 20, 4, 64),
+                audio["packet_ms"],
+                " ".join(audio_command),
+            )
         else:
             logging.info("Microphone audio is disabled by PETCAM_AUDIO.")
         capture = subprocess.Popen(

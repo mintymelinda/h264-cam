@@ -112,8 +112,32 @@ class AudioCaptureCommandTests(unittest.TestCase):
         self.assertEqual(command[command.index("--rate") + 1], "48000")
         self.assertEqual(command[command.index("--channels") + 1], "2")
         self.assertEqual(command[command.index("--period-size") + 1], "960")
-        self.assertEqual(command[command.index("--buffer-size") + 1], "3840")
+        self.assertEqual(command[command.index("--buffer-size") + 1], "19200")
         self.assertIn("--file-type", command)
+
+    def test_audio_buffer_periods_can_be_configured(self):
+        with patch.dict(
+            os.environ,
+            {"PETCAM_AUDIO": "1", "PETCAM_AUDIO_DEVICE": "hw:1,0",
+             "PETCAM_AUDIO_BUFFER_PERIODS": "24"},
+            clear=True,
+        ):
+            with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/arecord"):
+                command = build_audio_capture_command()
+
+        self.assertEqual(command[command.index("--period-size") + 1], "960")
+        self.assertEqual(command[command.index("--buffer-size") + 1], "23040")
+
+    def test_rejects_unreasonable_audio_buffer_period_count(self):
+        with patch.dict(
+            os.environ,
+            {"PETCAM_AUDIO": "1", "PETCAM_AUDIO_DEVICE": "hw:1,0",
+             "PETCAM_AUDIO_BUFFER_PERIODS": "2"},
+            clear=True,
+        ):
+            with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value="/usr/bin/arecord"):
+                with self.assertRaisesRegex(Live555Error, "PETCAM_AUDIO_BUFFER_PERIODS"):
+                    build_audio_capture_command()
 
     def test_auto_selection_uses_first_capture_device_when_kiyo_name_is_unavailable(self):
         listing = "card 1: USB [USB Audio], device 0: USB Audio [USB Audio]\n"
