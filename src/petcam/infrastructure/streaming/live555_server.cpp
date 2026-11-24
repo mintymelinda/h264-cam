@@ -631,6 +631,9 @@ int petcam_push_nal(const unsigned char* data, std::size_t size, int isIdr) {
 const char* petcam_last_error() { return startupMessage.c_str(); }
 unsigned petcam_client_count() { return connectedClients.load(std::memory_order_relaxed); }
 unsigned long long petcam_nal_count() { return deliveredNals.load(std::memory_order_relaxed); }
+unsigned long long petcam_audio_handoff_count() {
+  return audioFramesHandedToSink.load(std::memory_order_relaxed);
+}
 unsigned long long petcam_nal_type_count(unsigned int nalType) {
   if (nalType >= deliveredNalsByType.size()) return 0;
   return deliveredNalsByType[nalType].load(std::memory_order_relaxed);
