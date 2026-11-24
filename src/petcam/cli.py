@@ -724,7 +724,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "-c", metavar="SOURCE;RESOLUTION;FPS", dest="shortcut",
-        help="apply a camera mode directly (for example: -c \\"USB;1920x1080;30\\")",
+        help="apply a camera mode directly (for example: -c \"USB;1920x1080;30\")",
     )
     parser.add_argument(
         "--configure", action="store_true",
