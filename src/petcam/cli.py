@@ -534,7 +534,7 @@ def save_stream_configuration(config: dict, path: Path | None = None) -> None:
     temporary = Path(temporary_name)
     try:
         with os.fdopen(temporary_fd, "w", encoding="utf-8") as output:
-            output.write(json.dumps(config, indent=2) + "\\n")
+            output.write(json.dumps(config, indent=2) + "\n")
         if os.geteuid() == 0:
             subprocess.run(
                 ["/usr/bin/install", "-D", "-m", "0644", str(temporary), str(target)],
