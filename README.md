@@ -35,6 +35,26 @@ Run the guided terminal workflow:
 petcam
 ```
 
+On the first successful setup, PetCam saves the selected camera/audio configuration and
+enables `petcam.service`. The service starts the Live555 RTSP listener in the background,
+independently of the terminal interface. It is enabled for subsequent Pi boots. Pressing
+`q` or closing the SSH terminal exits only the status screen; it does not stop the stream.
+
+The service keeps the RTSP listener and existing RTSP sessions alive while it retries
+camera capture after device disconnects or capture-process failures. Recovery waits for a
+fresh SPS/PPS plus IDR sequence before video resumes. Microphone capture has its own retry
+loop, so an audio-device outage does not stop video or the RTSP listener. Re-running
+`petcam` lets you select a new mode; saving a changed configuration restarts the service
+to apply the selected audio-track and camera settings.
+
+Useful service commands:
+
+```sh
+sudo systemctl status petcam.service
+sudo journalctl -u petcam.service -f
+sudo systemctl restart petcam.service
+```
+
 ## Repair an installed image
 
 The prebuilt image retains the exact release checkout at `/opt/petcam/source/`. To
@@ -59,7 +79,7 @@ petcam -c "USB;1920x1080;30"
 petcam -c "USB;1280x720;30"
 ```
 
-The RTSP endpoint is `rtsp://DEVICE-HOSTNAME.local:8554/petcam`. The installer includes
+The persistent RTSP endpoint is `rtsp://DEVICE-HOSTNAME.local:8554/petcam`. The installer includes
 `avahi-daemon`, which publishes the Raspberry Pi hostname over mDNS. The displayed URL
 uses the system hostname with `.local`; set `PETCAM_ADVERTISE_HOST` to override it when
 using a different DNS name. The client must support mDNS/Bonjour name resolution.
