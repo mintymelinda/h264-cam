@@ -242,11 +242,11 @@ class NativeCaptureTests(unittest.TestCase):
             def push_nal(self, nal, is_idr=False):
                 self.nals.append((nal, is_idr))
 
-        prefix = b"\\x00\\x00\\x00\\x01"
-        sps = b"\\x67\\x42\\x00\\x1e"
-        pps = b"\\x68\\xce\\x06"
-        idr = b"\\x65\\x88"
-        delta = b"\\x41\\x9a"
+        prefix = b"\x00\x00\x00\x01"
+        sps = b"\x67\x42\x00\x1e"
+        pps = b"\x68\xce\x06"
+        idr = b"\x65\x88"
+        delta = b"\x41\x9a"
         server = FakeServer()
         publisher = H264Publisher(server)
 
