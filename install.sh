@@ -107,8 +107,20 @@ log "Verifying the installed command's exact help output."
 if ! /usr/bin/python3 "$REPO_ROOT/scripts/smoke-test-installed-help.py"; then
   fail "The installed /usr/local/bin/petcam -h output did not match exactly."
 fi
+[[ -s "$REPO_ROOT/systemd/petcam.service" ]] || fail "The persistent PetCam systemd service unit is missing."
+command -v systemctl >/dev/null 2>&1 || fail "systemd systemctl is required."
+log "Installing the persistent RTSP service definition."
+install -d -m 0755 /etc/petcam /var/log/petcam
+SERVICE_TMP="$(mktemp /etc/systemd/system/.petcam.service.XXXXXX)"
+trap 'rm -f "$SERVICE_TMP"' EXIT
+sed "s|/opt/petcam|$APP_ROOT|g" "$REPO_ROOT/systemd/petcam.service" > "$SERVICE_TMP"
+install -o root -g root -m 0644 "$SERVICE_TMP" /etc/systemd/system/petcam.service
+rm -f "$SERVICE_TMP"
+trap - EXIT
+systemctl daemon-reload
 log "Installed PetCam at $APP_ROOT."
 log "Verified the Python package, CLI help, and native Live555 library."
 log "Camera detection, capture, and RTSP streaming are not tested during installation."
-log "Connect and configure a camera, then run 'petcam' to start capture and streaming."
+log "Run 'petcam' and complete camera setup once; it saves the config and enables the RTSP service at boot."
+log "After setup, 'petcam' opens the saved stream status; use 'petcam --configure' to change settings."
 log "Run 'petcam -h' for command help."

@@ -62,6 +62,7 @@ int kAudioPacketMs10 = 200;
 constexpr int kAudioComplexity = 5;
 OpusEncoder* audioEncoder = nullptr;
 std::uint64_t sequence = 1;
+std::atomic<unsigned long long> videoGeneration{0};
 std::thread worker;
 TaskScheduler* scheduler = nullptr;
 EventTriggerId shutdownId = 0;
@@ -139,6 +140,7 @@ protected:
   explicit NalSource(UsageEnvironment& env, bool includeStartCode,
                      std::shared_ptr<petcam::MediaSessionStart> sessionStart)
     : FramedSource(env), includeStartCode_(includeStartCode),
+      generation_(videoGeneration.load(std::memory_order_relaxed)),
       sessionStart_(std::move(sessionStart)) {}
   void doGetNextFrame() override {
     // Never call afterGetting() re-entrantly from RTSP PLAY/SETUP handling.
@@ -164,6 +166,17 @@ private:
   }
   void deliver() {
     if (!isCurrentlyAwaitingData()) return;
+
+    const auto currentGeneration = videoGeneration.load(std::memory_order_relaxed);
+    if (generation_ != currentGeneration) {
+      // Drop any partial NAL from the previous camera process. Existing RTSP
+      // sources will resume only at a complete SPS/PPS + IDR recovery point.
+      currentNal_.clear();
+      currentNalOffset_ = 0;
+      cursor_ = 0;
+      cursorSet_ = false;
+      generation_ = currentGeneration;
+    }
 
     if (currentNal_.empty()) loadNextNal();
     if (currentNal_.empty()) {
@@ -246,6 +259,7 @@ private:
   std::uint64_t cursor_ = 0;
   bool cursorSet_ = false;
   bool includeStartCode_;
+  unsigned long long generation_ = 0;
   std::shared_ptr<MediaSessionStart> sessionStart_;
   std::chrono::steady_clock::time_point currentPresentationTime_{};
   std::vector<unsigned char> currentNal_;
@@ -633,6 +647,12 @@ int petcam_push_nal(const unsigned char* data, std::size_t size, int isIdr) {
     queue.pop_front();
   }
   return 0;
+}
+void petcam_clear_nals() {
+  std::lock_guard<std::mutex> lock(queueMutex);
+  queue.clear();
+  queueBytes = 0;
+  videoGeneration.fetch_add(1, std::memory_order_relaxed);
 }
 const char* petcam_last_error() { return startupMessage.c_str(); }
 unsigned petcam_client_count() { return connectedClients.load(std::memory_order_relaxed); }
