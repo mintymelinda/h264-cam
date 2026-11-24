@@ -25,6 +25,7 @@ from ..system.hostname import advertised_hostname
 RUN_DIR = Path(os.environ.get("PETCAM_RUN", f"/tmp/petcam-{os.getuid()}"))
 CAMERA_STATUS = RUN_DIR / "camera-status.json"
 STREAM_STATUS = RUN_DIR / "stream-status.json"
+CONFIG_FILE = Path(os.environ.get("PETCAM_CONFIG", "/etc/petcam/config.json"))
 RTSP_PORT = 8554
 RTSP_PATH = "/petcam"
 MAX_NAL_BYTES = 16 * 1024 * 1024
@@ -34,13 +35,22 @@ class Live555Error(RuntimeError):
     """Raised when native capture or the Live555 RTSP server cannot start."""
 
 
-def load_camera_status(path: Path | str = CAMERA_STATUS) -> dict:
+def load_camera_status(path: Path | str = CONFIG_FILE) -> dict:
+    """Load the durable camera selection used by the boot-persistent service."""
     try:
-        status = json.loads(Path(path).read_text(encoding="utf-8"))
-        pid = int(status.get("pid", 0))
-        if status.get("native_h264") is not True or pid <= 1:
+        config = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
             return {}
-        os.kill(pid, 0)
+        backend = str(config.get("source", "")).lower()
+        if backend not in {"usb", "csi"}:
+            return {}
+        status = {
+            **config,
+            "backend": backend,
+            "native_h264": True,
+            "audio": config.get("audio", {}),
+        }
+        validate_mode(status)
         return status
     except (OSError, ValueError, TypeError):
         return {}
@@ -297,6 +307,8 @@ class Live555Server:
         self.library.petcam_push_audio_pcm.restype = ctypes.c_int
         self.library.petcam_clear_audio.argtypes = []
         self.library.petcam_clear_audio.restype = None
+        self.library.petcam_clear_nals.argtypes = []
+        self.library.petcam_clear_nals.restype = None
         self.library.petcam_last_error.restype = ctypes.c_char_p
         self.library.petcam_stop.argtypes = []
         self.library.petcam_stop.restype = None
@@ -332,6 +344,9 @@ class Live555Server:
 
     def clear_audio(self) -> None:
         self.library.petcam_clear_audio()
+
+    def clear_nals(self) -> None:
+        self.library.petcam_clear_nals()
 
     def start(self, port: int = RTSP_PORT, path: str = RTSP_PATH) -> None:
         if self.library.petcam_start(port, path.encode("ascii")) != 0:
@@ -376,6 +391,12 @@ class H264Publisher:
         self._counter_lock = threading.Lock()
         self._captured_nals = Counter()
         self._queued_nals = Counter()
+
+    def reset_capture(self) -> None:
+        """Forget codec parameter sets so recovery waits for fresh SPS/PPS/IDR."""
+        self.sps = b""
+        self.pps = b""
+        self.started = False
 
     def counter_snapshot(self) -> dict[str, dict[str, int]]:
         with self._counter_lock:
@@ -467,18 +488,14 @@ def write_status(
 
 
 def run_server(camera_status: dict) -> int:
-    command = build_capture_command(camera_status)
+    """Keep RTSP alive while video and microphone capture recover independently."""
     server = Live555Server()
     capture = None
     reader = None
+    capture_stop = None
     audio_capture = None
     audio_reader = None
-    stop_reader = threading.Event()
-    first_idr = threading.Event()
-    reader_error = {"message": ""}
-    audio_reader_error = {"message": ""}
-    audio_metrics_lock = threading.Lock()
-    audio_metrics = {"capture_frames": 0, "native_accepted_frames": 0, "pcm_bytes": 0, "rms": 0.0, "peak": 0, "minimum": 0, "maximum": 0, "last_frame_at": None, "pending_bytes": 0}
+    audio_stop = None
     publisher = H264Publisher(server)
     framer_mode = os.environ.get("PETCAM_LIVE555_FRAMER", "stream").strip().lower()
     if framer_mode not in {"stream", "discrete"}:
@@ -486,13 +503,22 @@ def run_server(camera_status: dict) -> int:
     stop_requested = threading.Event()
     previous_sigterm = signal.signal(signal.SIGTERM, lambda _signum, _frame: stop_requested.set())
     previous_sigint = signal.signal(signal.SIGINT, lambda _signum, _frame: stop_requested.set())
+    first_idr = threading.Event()
+    reader_error = {"message": ""}
+    audio_reader_error = {"message": ""}
+    audio_metrics_lock = threading.Lock()
+    audio_metrics = {
+        "capture_frames": 0, "native_accepted_frames": 0, "pcm_bytes": 0,
+        "rms": 0.0, "peak": 0, "minimum": 0, "maximum": 0,
+        "last_frame_at": None, "pending_bytes": 0,
+    }
 
-    def read_capture() -> None:
-        assert capture is not None and capture.stdout is not None
+    def read_capture(process, stop_event, errors) -> None:
+        assert process.stdout is not None
         framer = AnnexBNalFramer()
         try:
-            while not stop_reader.is_set():
-                chunk = capture.stdout.read(65536)
+            while not stop_event.is_set():
+                chunk = process.stdout.read(65536)
                 if not chunk:
                     break
                 for nal in framer.feed(chunk):
@@ -503,23 +529,26 @@ def run_server(camera_status: dict) -> int:
                 publisher.publish(nal)
                 if publisher.started:
                     first_idr.set()
-            if not stop_reader.is_set():
-                reader_error["message"] = "Camera capture stopped producing H.264 data."
-        except (OSError, H264FramingError, Live555Error) as error:
-            reader_error["message"] = str(error)
-            logging.exception("H.264 capture/publishing failed")
+            if not stop_event.is_set():
+                errors["message"] = "Camera capture stopped producing H.264 data."
+        except (OSError, H264FramingError, Live555Error, ValueError) as error:
+            if not stop_event.is_set():
+                errors["message"] = str(error)
+                logging.exception("H.264 capture/publishing failed")
 
-    def read_audio_capture(audio: dict) -> None:
-        assert audio_capture is not None and audio_capture.stdout is not None
+    def read_audio_capture(process, stop_event, errors, audio: dict) -> None:
+        assert process.stdout is not None
         framer = PcmAudioFramer(
-            int(audio["sample_rate"]), int(audio["channels"]), float(audio["packet_ms"])
+            int(audio.get("sample_rate", 48000)),
+            int(audio.get("channels", 2)),
+            float(audio.get("packet_ms", 20)),
         )
         try:
-            while not stop_reader.is_set():
-                chunk = audio_capture.stdout.read(framer.frame_bytes)
+            while not stop_event.is_set():
+                chunk = process.stdout.read(framer.frame_bytes)
                 if not chunk:
-                    if not stop_reader.is_set():
-                        audio_reader_error["message"] = "ALSA microphone capture stopped unexpectedly."
+                    if not stop_event.is_set():
+                        errors["message"] = "ALSA microphone capture stopped unexpectedly."
                     break
                 for frame in framer.feed(chunk):
                     count = 0
@@ -545,74 +574,149 @@ def run_server(camera_status: dict) -> int:
                         audio_metrics["maximum"] = maximum
                         audio_metrics["last_frame_at"] = time.time()
                         audio_metrics["pending_bytes"] = len(framer._pending)
-        except (OSError, Live555Error) as error:
-            if not stop_reader.is_set():
-                audio_reader_error["message"] = str(error)
+        except (OSError, Live555Error, ValueError) as error:
+            if not stop_event.is_set():
+                errors["message"] = str(error)
                 logging.exception("Microphone audio capture failed")
 
-    logging.info("Using Live555 H.264 framer mode: %s", framer_mode)
+    def stop_capture_process(process, thread, stop_event, label: str) -> None:
+        if stop_event is not None:
+            stop_event.set()
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=3)
+        if process is not None and process.stdout is not None:
+            process.stdout.close()
+        logging.info("%s capture process stopped", label)
+
+    logging.info("Starting persistent Live555 RTSP listener; H.264 framer mode: %s", framer_mode)
     started_at = time.monotonic()
+    next_video_attempt = started_at
+    next_audio_attempt = started_at
+    capture_started_at = 0.0
     previous_capture_count = 0
     previous_queued_count = 0
     previous_nal_count = 0
     previous_sample_at = started_at
     previous_audio_frames = 0
+    audio = camera_status.get("audio", {})
+    audio_enabled = audio.get("enabled", True) is not False and os.environ.get(
+        "PETCAM_AUDIO", "1"
+    ).strip().lower() not in {"0", "false", "no", "off"}
+
     try:
-        audio = camera_status.get("audio", {})
         server.configure_audio(audio)
         server.start()
         server.clear_audio()
-        audio_command = build_audio_capture_command(camera_status)
-        if audio_command is not None:
-            audio_device = audio_command[audio_command.index("--device") + 1]
-            capture_gain_percent = int(audio.get("capture_gain_percent", 100))
-            set_alsa_capture_volume(audio_device, capture_gain_percent)
-            logging.info(
-                "Set ALSA microphone capture volume to %s%% on %s",
-                capture_gain_percent,
-                audio_device,
-            )
-            try:
-                audio_capture = subprocess.Popen(
-                    audio_command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                    stderr=None, bufsize=0,
-                )
-            except OSError as error:
-                raise Live555Error(f"Unable to start ALSA microphone capture: {error}") from error
-            if audio_capture.stdout is None:
-                raise Live555Error("Unable to open the microphone capture pipe.")
-            audio_reader = threading.Thread(
-                target=read_audio_capture, args=(audio,), name="petcam-audio-capture", daemon=True
-            )
-            audio_reader.start()
-            logging.info(
-                "Microphone audio enabled: ALSA buffer=%d periods (%.1fms), packet=%sms; command: %s",
-                _environment_integer("PETCAM_AUDIO_BUFFER_PERIODS", 20, 4, 64),
-                float(audio["packet_ms"]) * _environment_integer("PETCAM_AUDIO_BUFFER_PERIODS", 20, 4, 64),
-                audio["packet_ms"],
-                " ".join(audio_command),
-            )
-        else:
-            logging.info("Microphone audio is disabled by PETCAM_AUDIO.")
-        capture = subprocess.Popen(
-            command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, bufsize=0,
+        logging.info(
+            "Persistent RTSP endpoint: rtsp://%s:%s%s",
+            advertised_hostname(), RTSP_PORT, RTSP_PATH,
         )
-        reader = threading.Thread(target=read_capture, name="petcam-h264-capture", daemon=True)
-        reader.start()
-        logging.info("H.264 RTSP endpoint: rtsp://%s:%s%s", advertised_hostname(), RTSP_PORT, RTSP_PATH)
+
         while not stop_requested.is_set():
-            if capture.poll() is not None:
-                raise Live555Error(f"Camera capture exited with status {capture.returncode}.")
-            if reader_error["message"]:
-                raise Live555Error(reader_error["message"])
-            if audio_capture is not None and audio_capture.poll() is not None:
-                raise Live555Error(
-                    f"ALSA microphone capture exited with status {audio_capture.returncode}."
-                )
-            if audio_reader_error["message"]:
-                raise Live555Error(audio_reader_error["message"])
             now = time.monotonic()
+
+            # Video capture is disposable. A failure clears only queued video and
+            # restarts the camera process; Live555, RTSP sessions and ALSA continue.
+            if capture is None and now >= next_video_attempt:
+                try:
+                    command = build_capture_command(camera_status)
+                    capture = subprocess.Popen(
+                        command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL, bufsize=0,
+                    )
+                    if capture.stdout is None:
+                        raise Live555Error("Unable to open the H.264 capture pipe.")
+                    publisher.reset_capture()
+                    first_idr.clear()
+                    reader_error["message"] = ""
+                    capture_stop = threading.Event()
+                    reader = threading.Thread(
+                        target=read_capture, args=(capture, capture_stop, reader_error),
+                        name="petcam-h264-capture", daemon=True,
+                    )
+                    reader.start()
+                    capture_started_at = now
+                    logging.info("Camera capture started: %s", " ".join(command))
+                except (OSError, Live555Error) as error:
+                    logging.warning("Camera unavailable; RTSP listener remains active: %s", error)
+                    capture = None
+                    reader = None
+                    capture_stop = None
+                    next_video_attempt = now + 3
+
+            video_failure = ""
+            if capture is not None:
+                if capture.poll() is not None:
+                    video_failure = f"Camera capture exited with status {capture.returncode}."
+                elif reader_error["message"]:
+                    video_failure = reader_error["message"]
+                elif not first_idr.is_set() and now - capture_started_at > 12:
+                    video_failure = "No H.264 IDR with fresh SPS/PPS arrived within 12 seconds."
+            if video_failure:
+                logging.warning("%s Restarting camera capture without stopping RTSP.", video_failure)
+                stop_capture_process(capture, reader, capture_stop, "H.264")
+                capture = None
+                reader = None
+                capture_stop = None
+                reader_error["message"] = ""
+                first_idr.clear()
+                publisher.reset_capture()
+                server.clear_nals()
+                next_video_attempt = now + 2
+
+            # Audio recovery is independent too: a missing microphone must not
+            # take down the video listener or its current RTSP clients.
+            if audio_enabled and audio_capture is None and now >= next_audio_attempt:
+                try:
+                    audio_command = build_audio_capture_command(camera_status)
+                    if audio_command is not None:
+                        audio_device = audio_command[audio_command.index("--device") + 1]
+                        capture_gain_percent = int(audio.get("capture_gain_percent", 100))
+                        set_alsa_capture_volume(audio_device, capture_gain_percent)
+                        audio_capture = subprocess.Popen(
+                            audio_command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=None, bufsize=0,
+                        )
+                        if audio_capture.stdout is None:
+                            raise Live555Error("Unable to open the microphone capture pipe.")
+                        audio_reader_error["message"] = ""
+                        audio_stop = threading.Event()
+                        audio_reader = threading.Thread(
+                            target=read_audio_capture,
+                            args=(audio_capture, audio_stop, audio_reader_error, audio),
+                            name="petcam-audio-capture", daemon=True,
+                        )
+                        audio_reader.start()
+                        logging.info("Microphone audio capture started: %s", " ".join(audio_command))
+                except (OSError, Live555Error) as error:
+                    logging.warning("Microphone unavailable; video RTSP remains active: %s", error)
+                    audio_capture = None
+                    audio_reader = None
+                    audio_stop = None
+                    next_audio_attempt = now + 5
+
+            audio_failure = ""
+            if audio_capture is not None:
+                if audio_capture.poll() is not None:
+                    audio_failure = f"ALSA capture exited with status {audio_capture.returncode}."
+                elif audio_reader_error["message"]:
+                    audio_failure = audio_reader_error["message"]
+            if audio_failure:
+                logging.warning("%s Restarting microphone capture; RTSP listener remains active.", audio_failure)
+                stop_capture_process(audio_capture, audio_reader, audio_stop, "ALSA")
+                audio_capture = None
+                audio_reader = None
+                audio_stop = None
+                audio_reader_error["message"] = ""
+                next_audio_attempt = now + 3
+
             elapsed = max(now - previous_sample_at, 0.001)
             publisher_counts = publisher.counter_snapshot()
             captured_by_type = publisher_counts["captured"]
@@ -633,9 +737,13 @@ def run_server(camera_status: dict) -> int:
             audio_rate = (audio_snapshot["native_accepted_frames"] - previous_audio_frames) / elapsed
             previous_audio_frames = audio_snapshot["native_accepted_frames"]
             audio_snapshot["frames_per_second"] = round(audio_rate, 1)
-            audio_snapshot["capture_device"] = audio_command[audio_command.index("--device") + 1] if audio_command else None
-            audio_snapshot["capture_command"] = audio_command
-            audio_snapshot["capture_process_running"] = audio_capture is not None and audio_capture.poll() is None
+            audio_snapshot["capture_device"] = (
+                audio_command[audio_command.index("--device") + 1]
+                if audio_capture is not None and "audio_command" in locals() else None
+            )
+            audio_snapshot["capture_process_running"] = (
+                audio_capture is not None and audio_capture.poll() is None
+            )
             audio_snapshot["gain_percent"] = int(audio.get("capture_gain_percent", 100))
             audio_snapshot["codec"] = str(audio.get("output_codec", "OPUS")).upper()
             audio_snapshot["sample_rate"] = int(audio.get("sample_rate", 48000))
@@ -644,9 +752,10 @@ def run_server(camera_status: dict) -> int:
             logging.info(
                 "Audio diagnostic: device=%s running=%s frames/s=%.1f accepted=%d handoffs=%d RMS=%s peak=%s range=[%s,%s] pending=%sB",
                 audio_snapshot["capture_device"], audio_snapshot["capture_process_running"],
-                audio_rate, audio_snapshot["native_accepted_frames"], audio_snapshot["live555_source_handoffs"], audio_snapshot["rms"],
-                audio_snapshot["peak"], audio_snapshot["minimum"], audio_snapshot["maximum"],
-                audio_snapshot["pending_bytes"],
+                audio_rate, audio_snapshot["native_accepted_frames"],
+                audio_snapshot["live555_source_handoffs"], audio_snapshot["rms"],
+                audio_snapshot["peak"], audio_snapshot["minimum"],
+                audio_snapshot["maximum"], audio_snapshot["pending_bytes"],
             )
             status_metrics = {
                 "rtsp_clients": server.client_count(),
@@ -660,53 +769,37 @@ def run_server(camera_status: dict) -> int:
             }
             if first_idr.is_set():
                 write_status("ready", camera_status, **status_metrics)
-            elif now - started_at > 12:
-                raise Live555Error("No H.264 IDR frame with SPS/PPS arrived within 12 seconds.")
+            elif capture is None:
+                write_status(
+                    "reconnecting", camera_status,
+                    "Waiting for an available H.264 camera; RTSP listener is online.",
+                    **status_metrics,
+                )
             else:
-                write_status("starting", camera_status, **status_metrics)
-            stop_requested.wait(1)
+                write_status(
+                    "starting", camera_status,
+                    "RTSP listener is online; waiting for SPS/PPS and an IDR frame.",
+                    **status_metrics,
+                )
+            stop_requested.wait(0.5)
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)
         signal.signal(signal.SIGINT, previous_sigint)
-        stop_reader.set()
-        if audio_capture is not None:
-            if audio_capture.poll() is None:
-                audio_capture.terminate()
-                try:
-                    audio_capture.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    audio_capture.kill()
-                    audio_capture.wait(timeout=2)
-            if audio_capture.stdout is not None:
-                audio_capture.stdout.close()
-        if audio_reader is not None and audio_reader.is_alive():
-            audio_reader.join(timeout=2)
-        if capture is not None:
-            if capture.poll() is None:
-                capture.terminate()
-                try:
-                    capture.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    capture.kill()
-                    capture.wait(timeout=2)
-            if capture.stdout is not None:
-                capture.stdout.close()
-        if reader is not None and reader.is_alive():
-            reader.join(timeout=2)
+        stop_capture_process(audio_capture, audio_reader, audio_stop, "ALSA")
+        stop_capture_process(capture, reader, capture_stop, "H.264")
         server.stop()
         write_status("stopped", camera_status)
-
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     camera_status = load_camera_status()
     if not camera_status:
-        logging.error("No active native H.264 camera capture was found.")
+        logging.error("No valid saved camera configuration found at %s.", CONFIG_FILE)
         return 1
     try:
         return run_server(camera_status)
     except Exception as error:
-        logging.exception("Unable to start the H.264 RTSP server")
+        logging.exception("Persistent H.264 RTSP service failed")
         try:
             write_status("error", camera_status, str(error))
         except OSError:
