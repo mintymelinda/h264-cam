@@ -517,7 +517,13 @@ def _terminate(process: subprocess.Popen | None) -> None:
 
 def _run_service_command(arguments: list[str]) -> None:
     command = arguments if os.geteuid() == 0 else ["sudo", *arguments]
+    terminal_suspended = False
     try:
+        try:
+            curses.endwin()
+            terminal_suspended = True
+        except curses.error:
+            pass
         subprocess.run(command, check=True)
     except FileNotFoundError as error:
         raise RuntimeError(f"Required command is missing: {command[0]}") from error
@@ -525,6 +531,13 @@ def _run_service_command(arguments: list[str]) -> None:
         raise RuntimeError(
             f"Unable to manage petcam.service (command exited {error.returncode})."
         ) from error
+    finally:
+        if terminal_suspended:
+            try:
+                curses.reset_prog_mode()
+                curses.doupdate()
+            except curses.error:
+                pass
 
 
 def save_stream_configuration(config: dict, path: Path | None = None) -> None:
@@ -568,7 +581,6 @@ def activate_stream_service(*, restart: bool = False) -> None:
 
 def run_stream(config: dict, stdscr, *, reconfigure: bool = False) -> int:
     """Manage the persistent stream; leaving this screen never stops RTSP."""
-    RUN_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
     if reconfigure:
         save_stream_configuration(config)
     activate_stream_service(restart=reconfigure)
