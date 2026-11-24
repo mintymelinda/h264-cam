@@ -246,47 +246,58 @@ def discover_audio_capabilities() -> dict:
         return fallback
 
 def configure_audio(stdscr) -> dict:
+    audio_index = select_menu(
+        stdscr,
+        "Step 4 · Audio",
+        "Enable microphone capture or disable audio for this stream.",
+        ["Enable microphone audio", "Disable audio"],
+    )
+    if audio_index is None:
+        raise KeyboardInterrupt
+    if audio_index == 1:
+        return {"enabled": False}
+
     capabilities = discover_audio_capabilities()
     rates = capabilities["sample_rates"]
-    index = select_menu(stdscr, "Step 4 · Audio sample rate",
+    index = select_menu(stdscr, "Step 5 · Audio sample rate",
         "Choose the ALSA microphone capture rate.",
         [str(rate // 1000) + " kHz" for rate in rates])
     if index is None:
         raise KeyboardInterrupt
     sample_rate = rates[index]
-    index = select_menu(stdscr, "Step 5 · Audio channels",
+    index = select_menu(stdscr, "Step 6 · Audio channels",
         "Choose mono or stereo capture.",
         ["Mono" if count == 1 else "Stereo" for count in capabilities["channels"]])
     if index is None:
         raise KeyboardInterrupt
     channels = capabilities["channels"][index]
-    index = select_menu(stdscr, "Step 6 · Input format",
+    index = select_menu(stdscr, "Step 7 · Input format",
         "The capture path accepts signed 16-bit little-endian PCM.",
         ["S16_LE PCM"])
     if index is None:
         raise KeyboardInterrupt
     input_format = "S16_LE"
-    index = select_menu(stdscr, "Step 7 · Output codec",
+    index = select_menu(stdscr, "Step 8 · Output codec",
         "Opus is the recommended compressed option; L16 sends uncompressed PCM.",
         ["Opus (compressed)", "PCM (L16, uncompressed)"])
     if index is None:
         raise KeyboardInterrupt
     output_codec = "OPUS" if index == 0 else "L16"
     durations = [20, 10, 40, 60] if output_codec == "OPUS" else [5]
-    index = select_menu(stdscr, "Step 8 · RTP packet duration",
+    index = select_menu(stdscr, "Step 9 · RTP packet duration",
         "Opus uses 20 ms by default; L16 uses 5 ms to keep stereo packets MTU-safe.",
         [str(duration) + " ms" for duration in durations])
     if index is None:
         raise KeyboardInterrupt
     packet_ms = durations[index]
     gain_options = [75, 100, 50, 25, 0]
-    index = select_menu(stdscr, "Step 9 · Microphone capture gain",
+    index = select_menu(stdscr, "Step 10 · Microphone capture gain",
         "Sets the ALSA microphone capture level. Start at 75%; reduce it if audio clips.",
         [str(gain) + "%" for gain in gain_options])
     if index is None:
         raise KeyboardInterrupt
     capture_gain_percent = gain_options[index]
-    return {"sample_rate": sample_rate, "channels": channels,
+    return {"enabled": True, "sample_rate": sample_rate, "channels": channels,
             "input_format": input_format, "output_codec": output_codec,
             "packet_ms": packet_ms, "capture_gain_percent": capture_gain_percent,
             "device": capabilities.get("device", "auto")}
@@ -372,14 +383,18 @@ def guided_configuration(stdscr) -> dict:
                 audio = configure_audio(stdscr)
             except KeyboardInterrupt:
                 continue
-            confirm_index = select_menu(
-                stdscr,
-                "Step 10 · Confirm stream",
-                f"{_camera_label(source, camera)}\n{mode['resolution']} at {mode['fps']:g} FPS · H.264\n"
+            audio_summary = (
                 f"Audio: {audio['sample_rate']} Hz, {audio['channels']} ch, "
                 f"{audio['input_format']} -> {audio['output_codec']} "
                 f"{audio['packet_ms']:g} ms\n"
-                f"Microphone capture gain: {audio['capture_gain_percent']}%",
+                f"Microphone capture gain: {audio['capture_gain_percent']}%"
+                if audio.get("enabled", True) else "Audio: Disabled"
+            )
+            confirm_index = select_menu(
+                stdscr,
+                "Step 11 · Confirm stream",
+                f"{_camera_label(source, camera)}\n{mode['resolution']} at {mode['fps']:g} FPS · H.264\n"
+                f"{audio_summary}",
                 ["Activate RTSP stream", "Return to capture mode selection"],
             )
             if confirm_index == 0:
@@ -407,6 +422,8 @@ def guided_configuration(stdscr) -> dict:
 
 def _audio_capture_mode_label(audio: dict) -> str:
     """Format the configured ALSA input mode for the live status display."""
+    if audio.get("enabled", True) is False:
+        return "Audio: Disabled"
     sample_rate = int(audio.get("sample_rate", 48000))
     channels = int(audio.get("channels", 2))
     channel_label = {1: "Mono", 2: "Stereo"}.get(channels, f"{channels} ch")
@@ -416,6 +433,8 @@ def _audio_capture_mode_label(audio: dict) -> str:
 
 def _audio_framing_label(audio: dict) -> str:
     """Show the selected codec packet duration and RTP clock."""
+    if audio.get("enabled", True) is False:
+        return "Audio: Disabled"
     sample_rate = int(audio.get("sample_rate", 48000))
     packet_ms = float(audio.get("packet_ms", 20))
     codec = str(audio.get("output_codec", "OPUS")).upper()

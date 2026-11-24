@@ -240,10 +240,12 @@ def build_audio_capture_command(camera_status: dict | None = None) -> list[str] 
     """Capture the configured signed PCM mode for the Live555 audio track."""
     if os.environ.get("PETCAM_AUDIO", "1").strip().lower() in {"0", "false", "no", "off"}:
         return None
-    if not shutil.which("arecord"):
-        raise Live555Error("arecord is missing; install alsa-utils to enable microphone audio.")
 
     audio = (camera_status or {}).get("audio", {})
+    if audio.get("enabled", True) is False:
+        return None
+    if not shutil.which("arecord"):
+        raise Live555Error("arecord is missing; install alsa-utils to enable microphone audio.")
     device = str(audio.get("device") or os.environ.get("PETCAM_AUDIO_DEVICE", "auto")).strip()
     if not device or any(char in device for char in "\r\n"):
         raise Live555Error("PETCAM_AUDIO_DEVICE must be a non-empty ALSA capture device name.")
@@ -279,7 +281,8 @@ class Live555Server:
         except OSError as error:
             raise Live555Error(f"Unable to load Live555 native library: {error}") from error
         self.library.petcam_configure_audio.argtypes = [
-            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int,
         ]
         self.library.petcam_configure_audio.restype = ctypes.c_int
         self.library.petcam_start.argtypes = [ctypes.c_ushort, ctypes.c_char_p]
@@ -307,6 +310,7 @@ class Live555Server:
         self.library.petcam_nal_type_count.restype = ctypes.c_ulonglong
 
     def configure_audio(self, audio: dict) -> None:
+        enabled = audio.get("enabled", True) is not False
         codec = str(audio.get("output_codec", "OPUS")).upper()
         codec_id = 1 if codec == "OPUS" else 0
         packet_ms10 = round(float(audio.get("packet_ms", 20 if codec == "OPUS" else 5)) * 10)
@@ -316,6 +320,7 @@ class Live555Server:
             codec_id,
             int(audio.get("bitrate", 128000)),
             packet_ms10,
+            int(enabled),
         )
         if result != 0:
             raise Live555Error("The native audio encoder rejected the selected codec configuration.")

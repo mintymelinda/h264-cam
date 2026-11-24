@@ -51,6 +51,9 @@ def validate_config(value: dict[str, Any]) -> dict[str, Any]:
     audio = value.get("audio", {})
     if not isinstance(audio, dict):
         raise ConfigurationError("Audio configuration must be an object.")
+    if audio.get("enabled", True) is False:
+        normalized["audio"] = {"enabled": False}
+        return normalized
     try:
         sample_rate = int(audio.get("sample_rate", 48000))
         channels = int(audio.get("channels", 2))
