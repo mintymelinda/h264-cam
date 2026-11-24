@@ -6,7 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import call, patch
 
-from petcam.cli import activate_stream_service, save_stream_configuration
+from petcam.cli import (
+    activate_stream_service,
+    load_saved_stream_configuration,
+    save_stream_configuration,
+)
 from petcam.infrastructure.streaming.live555 import load_camera_status
 
 
@@ -55,9 +59,41 @@ class PersistentServiceConfigurationTests(unittest.TestCase):
 
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), config)
 
-    def test_configuration_change_enables_service_and_restarts_it(self):
+    def test_saved_cli_configuration_is_reused_without_reconfiguration(self):
+        config = {
+            "source": "USB",
+            "device": "/dev/video0",
+            "resolution": "1280x720",
+            "fps": 30,
+            "audio": {"enabled": False},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            self.assertEqual(load_saved_stream_configuration(path), {
+                "source": "USB",
+                "resolution": "1280x720",
+                "fps": 30,
+                "device": "/dev/video0",
+                "physical_path": "",
+                "audio": {"enabled": False},
+            })
+
+    def test_existing_service_is_started_without_forcing_a_restart(self):
         with patch("petcam.cli._run_service_command") as run:
             activate_stream_service()
+
+        self.assertEqual(
+            run.call_args_list,
+            [
+                call(["systemctl", "enable", "petcam.service"]),
+                call(["systemctl", "start", "petcam.service"]),
+            ],
+        )
+
+    def test_configuration_change_enables_service_and_restarts_it(self):
+        with patch("petcam.cli._run_service_command") as run:
+            activate_stream_service(restart=True)
 
         self.assertEqual(
             run.call_args_list,
