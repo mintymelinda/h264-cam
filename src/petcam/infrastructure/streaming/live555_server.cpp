@@ -140,8 +140,8 @@ protected:
   explicit NalSource(UsageEnvironment& env, bool includeStartCode,
                      std::shared_ptr<petcam::MediaSessionStart> sessionStart)
     : FramedSource(env), includeStartCode_(includeStartCode),
-      sessionStart_(std::move(sessionStart)),
-      generation_(videoGeneration.load(std::memory_order_relaxed)) {}
+      generation_(videoGeneration.load(std::memory_order_relaxed)),
+      sessionStart_(std::move(sessionStart)) {}
   void doGetNextFrame() override {
     // Never call afterGetting() re-entrantly from RTSP PLAY/SETUP handling.
     // The RTSP response must be written before interleaved RTP/RTCP media.
