@@ -87,6 +87,11 @@ class AlsaCaptureVolumeTests(unittest.TestCase):
 
 
 class AudioCaptureCommandTests(unittest.TestCase):
+    def test_camera_configuration_can_disable_audio_without_alsa(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value=None):
+                self.assertIsNone(build_audio_capture_command({"audio": {"enabled": False}}))
+
     def test_disabled_audio_does_not_require_alsa(self):
         with patch.dict(os.environ, {"PETCAM_AUDIO": "0"}, clear=True):
             with patch("petcam.infrastructure.streaming.live555.shutil.which", return_value=None):
