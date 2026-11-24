@@ -240,12 +240,12 @@ def build_audio_capture_command(camera_status: dict | None = None) -> list[str] 
     """Capture the configured signed PCM mode for the Live555 audio track."""
     if os.environ.get("PETCAM_AUDIO", "1").strip().lower() in {"0", "false", "no", "off"}:
         return None
-    if not shutil.which("arecord"):
-        raise Live555Error("arecord is missing; install alsa-utils to enable microphone audio.")
 
     audio = (camera_status or {}).get("audio", {})
     if audio.get("enabled", True) is False:
         return None
+    if not shutil.which("arecord"):
+        raise Live555Error("arecord is missing; install alsa-utils to enable microphone audio.")
     device = str(audio.get("device") or os.environ.get("PETCAM_AUDIO_DEVICE", "auto")).strip()
     if not device or any(char in device for char in "\r\n"):
         raise Live555Error("PETCAM_AUDIO_DEVICE must be a non-empty ALSA capture device name.")
