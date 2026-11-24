@@ -26,10 +26,10 @@ from .infrastructure.camera.discovery import (
 from .infrastructure.system.metrics import ResourceMetrics
 from .infrastructure.system.hostname import advertised_hostname
 
-RUN_DIR = Path(os.environ.get("PETCAM_RUN", f"/tmp/petcam-{os.getuid()}"))
-CAMERA_STATUS = RUN_DIR / "camera-status.json"
+RUN_DIR = Path(os.environ.get("PETCAM_RUN", "/run/petcam"))
 STREAM_STATUS = RUN_DIR / "stream-status.json"
-STREAM_LOG = RUN_DIR / "stream.log"
+STREAM_LOG = Path(os.environ.get("PETCAM_STREAM_LOG", "/var/log/petcam/stream.log"))
+CONFIG_FILE = Path(os.environ.get("PETCAM_CONFIG", "/etc/petcam/config.json"))
 RTSP_PORT = 8554
 RTSP_PATH = "/petcam"
 HOTPLUG = object()
@@ -514,161 +514,163 @@ def _terminate(process: subprocess.Popen | None) -> None:
         process.wait(timeout=2)
 
 
-def run_stream(config: dict, stdscr) -> int:
-    RUN_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(RUN_DIR, 0o700)
-    CAMERA_STATUS.unlink(missing_ok=True)
-    STREAM_STATUS.unlink(missing_ok=True)
-    environment = os.environ.copy()
-    environment["PETCAM_RUN"] = str(RUN_DIR)
-    streaming_process = None
-    log_handle = None
-    camera_marker_owned = False
-
+def _run_service_command(arguments: list[str]) -> None:
+    command = arguments if os.geteuid() == 0 else ["sudo", *arguments]
     try:
-        marker = {
-            "pid": os.getpid(),
-            "audio": config.get("audio", {}),
-            "backend": config["source"].lower(),
-            "resolution": config["resolution"],
-            "fps": config["fps"],
-            "native_h264": True,
-        }
-        if config["source"] == "USB":
-            marker.update(
-                device=config["device"],
-                physical_path=config.get("physical_path", ""),
+        subprocess.run(command, check=True)
+    except FileNotFoundError as error:
+        raise RuntimeError(f"Required command is missing: {command[0]}") from error
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            f"Unable to manage petcam.service (command exited {error.returncode})."
+        ) from error
+
+
+def save_stream_configuration(config: dict, path: Path | None = None) -> None:
+    """Persist the selected camera mode for the boot-time service."""
+    target = path or CONFIG_FILE
+    temporary = target.with_name(target.name + f".{os.getpid()}.tmp")
+    try:
+        temporary.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        temporary.write_text(json.dumps(config, indent=2) + "\\n", encoding="utf-8")
+        if os.geteuid() == 0:
+            subprocess.run(
+                ["/usr/bin/install", "-D", "-m", "0644", str(temporary), str(target)],
+                check=True,
             )
         else:
-            marker.update(
-                camera=config["camera"],
-                sensor=config.get("sensor", ""),
-                device_path=config.get("device_path", ""),
+            _run_service_command(
+                ["/usr/bin/install", "-D", "-m", "0644", str(temporary), str(target)]
             )
-        temporary = CAMERA_STATUS.with_name(CAMERA_STATUS.name + ".tmp")
-        temporary.write_text(json.dumps(marker) + "\n", encoding="utf-8")
-        os.replace(temporary, CAMERA_STATUS)
-        camera_marker_owned = True
-
-        log_handle = STREAM_LOG.open("a", encoding="utf-8", buffering=1)
-        os.chmod(STREAM_LOG, 0o600)
-        log_handle.write(f"\n--- PetCam RTSP process started {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
-        streaming_process = subprocess.Popen(
-            [sys.executable, "-m", "petcam.infrastructure.streaming.live555"],
-            env=environment, stdin=subprocess.DEVNULL,
-            stdout=log_handle, stderr=subprocess.STDOUT,
-        )
-        start_deadline = time.monotonic() + 20
-        while time.monotonic() < start_deadline:
-            if streaming_process.poll() is not None:
-                raise RuntimeError("The Live555 H.264 RTSP server exited during startup.")
-            status = _read_status()
-            if status.get("state") in {"ready", "publishing"}:
-                break
-            if status.get("state") == "error":
-                raise RuntimeError(status.get("message") or "The Live555 H.264 RTSP server failed.")
-            time.sleep(0.2)
-        else:
-            raise RuntimeError("The Live555 H.264 RTSP server did not become ready.")
-
-        url = f"rtsp://{advertised_hostname()}:{RTSP_PORT}{RTSP_PATH}"
-        metrics = ResourceMetrics()
-        stdscr.timeout(1000)
-        while True:
-            if streaming_process.poll() is not None:
-                raise RuntimeError("The Live555 H.264 RTSP server stopped unexpectedly.")
-            status = _read_status()
-            resources = metrics.sample()
-            height, width = stdscr.getmaxyx()
-            stdscr.erase()
-            stdscr.addnstr(0, 0, "PetCam · H.264 RTSP", max(1, width - 1), curses.A_BOLD)
-            stdscr.addnstr(2, 0, "RTSP URL", max(1, width - 1), curses.A_BOLD)
-            stdscr.addnstr(3, 0, url, max(1, width - 1))
-            stdscr.addnstr(5, 0, "STREAM STATUS", max(1, width - 1), curses.A_BOLD)
-            status_updated_at = status.get("updated_at")
-            status_stale = (
-                not isinstance(status_updated_at, (int, float))
-                or time.time() - status_updated_at > 3
-            )
-            rtsp_state = "STATUS STALE" if status_stale else status.get("state", "starting").upper()
-            stdscr.addnstr(6, 0, f"RTSP: {rtsp_state}", max(1, width - 1))
-            clients = status.get("rtsp_clients")
-            if status_stale or not isinstance(clients, int):
-                client_text = "Unavailable"
-            else:
-                client_text = str(clients)
-            stdscr.addnstr(7, 0, f"RTSP clients: {client_text}", max(1, width - 1))
-            def type_count(field: str, nal_type: int) -> int:
-                values = status.get(field, {})
-                if not isinstance(values, dict):
-                    return 0
-                try:
-                    return int(values.get(str(nal_type), 0))
-                except (TypeError, ValueError):
-                    return 0
-
-            def rate_text(field: str) -> str:
-                value = status.get(field)
-                return f"{value:.1f} NAL/s" if isinstance(value, (int, float)) else "Unavailable"
-
-            if status_stale:
-                capture_text = queue_text = output_text = "Status unavailable"
-            else:
-                capture_text = (
-                    f"{rate_text('captured_nals_per_second')} · "
-                    f"IDR {type_count('captured_nals_by_type', 5)} · "
-                    f"non-IDR {type_count('captured_nals_by_type', 1)}"
-                )
-                queue_text = (
-                    f"{rate_text('queued_nals_per_second')} · "
-                    f"IDR {type_count('queued_nals_by_type', 5)} · "
-                    f"non-IDR {type_count('queued_nals_by_type', 1)}"
-                )
-                if not isinstance(clients, int):
-                    output_text = "Client count unavailable"
-                elif clients < 1:
-                    output_text = "Waiting for RTSP client"
-                else:
-                    output_text = (
-                        f"{rate_text('streamed_nals_per_second')} · "
-                        f"IDR {type_count('rtsp_source_nals_by_type', 5)} · "
-                        f"non-IDR {type_count('rtsp_source_nals_by_type', 1)}"
-                    )
-            stdscr.addnstr(8, 0, f"Camera input: {capture_text}", max(1, width - 1))
-            stdscr.addnstr(9, 0, f"Server queue: {queue_text}", max(1, width - 1))
-            stdscr.addnstr(10, 0, f"RTSP source: {output_text}", max(1, width - 1))
-            stdscr.addnstr(11, 0, f"Camera capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264", max(1, width - 1))
-            audio_config = config.get("audio", {})
-            stdscr.addnstr(12, 0, _audio_capture_mode_label(audio_config), max(1, width - 1))
-            stdscr.addnstr(13, 0, _audio_framing_label(audio_config), max(1, width - 1))
-            stdscr.addnstr(15, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
-            cpu = resources["cpu_percent"]
-            cpu_text = f"{cpu:.1f}%" if isinstance(cpu, (int, float)) else "Sampling…"
-            used, total = resources["memory_used_mb"], resources["memory_total_mb"]
-            memory_text = f"{used} / {total} MB" if used is not None and total is not None else "Unavailable"
-            stdscr.addnstr(16, 0, f"CPU: {cpu_text}", max(1, width - 1))
-            stdscr.addnstr(17, 0, f"Memory: {memory_text}", max(1, width - 1))
-            stdscr.addnstr(max(0, height - 1), 0, "l: view live log · q: stop RTSP stream", max(1, width - 1), curses.A_DIM)
-            stdscr.refresh()
-            key = stdscr.getch()
-            if key in (ord("q"), ord("Q"), 27):
-                return 0
-            if key in (ord("l"), ord("L")):
-                _show_log_viewer(stdscr)
-                stdscr.timeout(1000)
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeError(f"Unable to save camera configuration to {target}: {error}") from error
     finally:
-        _terminate(streaming_process)
-        if log_handle is not None:
-            log_handle.close()
-        if camera_marker_owned:
-            try:
-                marker = json.loads(CAMERA_STATUS.read_text(encoding="utf-8"))
-                if marker.get("pid") == os.getpid():
-                    CAMERA_STATUS.unlink(missing_ok=True)
-            except (OSError, ValueError):
-                pass
-        STREAM_STATUS.unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
 
+
+def activate_stream_service() -> None:
+    """Enable service at boot and restart it to apply the saved configuration."""
+    _run_service_command(["systemctl", "enable", "petcam.service"])
+    _run_service_command(["systemctl", "restart", "petcam.service"])
+
+
+def run_stream(config: dict, stdscr) -> int:
+    """Manage the persistent stream; leaving this screen never stops RTSP."""
+    RUN_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
+    save_stream_configuration(config)
+    activate_stream_service()
+
+    url = f"rtsp://{advertised_hostname()}:{RTSP_PORT}{RTSP_PATH}"
+    metrics = ResourceMetrics()
+    stdscr.timeout(1000)
+    start_deadline = time.monotonic() + 20
+    service_seen = False
+    while True:
+        status = _read_status()
+        status_updated_at = status.get("updated_at")
+        status_stale = (
+            not isinstance(status_updated_at, (int, float))
+            or time.time() - status_updated_at > 5
+        )
+        if not status_stale and status.get("state") in {
+            "ready", "starting", "reconnecting"
+        }:
+            service_seen = True
+        if not service_seen and time.monotonic() >= start_deadline:
+            raise RuntimeError(
+                "petcam.service was started but has not published status. "
+                f"Inspect it with: sudo journalctl -u petcam.service -n 100"
+            )
+
+        resources = metrics.sample()
+        height, width = stdscr.getmaxyx()
+        stdscr.erase()
+        stdscr.addnstr(0, 0, "PetCam · H.264 RTSP", max(1, width - 1), curses.A_BOLD)
+        stdscr.addnstr(2, 0, "RTSP URL", max(1, width - 1), curses.A_BOLD)
+        stdscr.addnstr(3, 0, url, max(1, width - 1))
+        stdscr.addnstr(5, 0, "PERSISTENT STREAM SERVICE", max(1, width - 1), curses.A_BOLD)
+        rtsp_state = "STATUS STALE" if status_stale else status.get("state", "starting").upper()
+        stdscr.addnstr(6, 0, f"RTSP: {rtsp_state}", max(1, width - 1))
+        clients = status.get("rtsp_clients")
+        if status_stale or not isinstance(clients, int):
+            client_text = "Unavailable"
+        else:
+            client_text = str(clients)
+        stdscr.addnstr(7, 0, f"RTSP clients: {client_text}", max(1, width - 1))
+
+        def type_count(field: str, nal_type: int) -> int:
+            values = status.get(field, {})
+            if not isinstance(values, dict):
+                return 0
+            try:
+                return int(values.get(str(nal_type), 0))
+            except (TypeError, ValueError):
+                return 0
+
+        def rate_text(field: str) -> str:
+            value = status.get(field)
+            return f"{value:.1f} NAL/s" if isinstance(value, (int, float)) else "Unavailable"
+
+        if status_stale:
+            capture_text = queue_text = output_text = "Status unavailable"
+        else:
+            capture_text = (
+                f"{rate_text('captured_nals_per_second')} · "
+                f"IDR {type_count('captured_nals_by_type', 5)} · "
+                f"non-IDR {type_count('captured_nals_by_type', 1)}"
+            )
+            queue_text = (
+                f"{rate_text('queued_nals_per_second')} · "
+                f"IDR {type_count('queued_nals_by_type', 5)} · "
+                f"non-IDR {type_count('queued_nals_by_type', 1)}"
+            )
+            if not isinstance(clients, int):
+                output_text = "Client count unavailable"
+            elif clients < 1:
+                output_text = "Waiting for RTSP client"
+            else:
+                output_text = (
+                    f"{rate_text('streamed_nals_per_second')} · "
+                    f"IDR {type_count('rtsp_source_nals_by_type', 5)} · "
+                    f"non-IDR {type_count('rtsp_source_nals_by_type', 1)}"
+                )
+        stdscr.addnstr(8, 0, f"Camera input: {capture_text}", max(1, width - 1))
+        stdscr.addnstr(9, 0, f"Server queue: {queue_text}", max(1, width - 1))
+        stdscr.addnstr(10, 0, f"RTSP source: {output_text}", max(1, width - 1))
+        stdscr.addnstr(
+            11, 0,
+            f"Camera capture mode: {config['source']} · {config['resolution']} · {config['fps']} FPS · H.264",
+            max(1, width - 1),
+        )
+        audio_config = config.get("audio", {})
+        stdscr.addnstr(12, 0, _audio_capture_mode_label(audio_config), max(1, width - 1))
+        stdscr.addnstr(13, 0, _audio_framing_label(audio_config), max(1, width - 1))
+        message = str(status.get("message") or "")
+        stdscr.addnstr(14, 0, message, max(1, width - 1))
+        stdscr.addnstr(16, 0, "SYSTEM RESOURCES", max(1, width - 1), curses.A_BOLD)
+        cpu = resources["cpu_percent"]
+        cpu_text = f"{cpu:.1f}%" if isinstance(cpu, (int, float)) else "Sampling…"
+        used, total = resources["memory_used_mb"], resources["memory_total_mb"]
+        memory_text = (
+            f"{used} / {total} MB"
+            if used is not None and total is not None else "Unavailable"
+        )
+        stdscr.addnstr(17, 0, f"CPU: {cpu_text}", max(1, width - 1))
+        stdscr.addnstr(18, 0, f"Memory: {memory_text}", max(1, width - 1))
+        stdscr.addnstr(
+            max(0, height - 1),
+            0,
+            "l: view service log · q: close this screen (RTSP keeps running)",
+            max(1, width - 1),
+            curses.A_DIM,
+        )
+        stdscr.refresh()
+        key = stdscr.getch()
+        if key in (ord("q"), ord("Q"), 27):
+            return 0
+        if key in (ord("l"), ord("L")):
+            _show_log_viewer(stdscr)
+            stdscr.timeout(1000)
 
 def _terminal_main(stdscr, config: dict | None) -> int:
     curses.curs_set(0)
