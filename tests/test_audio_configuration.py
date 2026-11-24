@@ -18,6 +18,10 @@ class AudioConfigurationTests(unittest.TestCase):
             "audio": audio,
         }
 
+    def test_validates_disabled_audio_without_capture_settings(self) -> None:
+        normalized = validate_config(self.base_config({"enabled": False}))
+        self.assertEqual(normalized["audio"], {"enabled": False})
+
     def test_validates_l16_audio_configuration(self) -> None:
         normalized = validate_config(self.base_config({
             "sample_rate": 48000,
@@ -60,6 +64,17 @@ class AudioConfigurationTests(unittest.TestCase):
         for gain in (-1, 101):
             with self.subTest(gain=gain), self.assertRaises(ConfigurationError):
                 validate_config(self.base_config({"capture_gain_percent": gain}))
+
+    def test_interactive_audio_setup_can_disable_audio_without_discovery(self) -> None:
+        with (
+            patch("petcam.cli.select_menu", return_value=1) as menu,
+            patch("petcam.cli.discover_audio_capabilities") as discover,
+        ):
+            audio = configure_audio(object())
+
+        self.assertEqual(audio, {"enabled": False})
+        menu.assert_called_once()
+        discover.assert_not_called()
 
     def test_interactive_audio_setup_offers_both_codecs_and_zero_gain(self) -> None:
         menu_calls = []
