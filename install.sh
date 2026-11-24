@@ -121,5 +121,6 @@ systemctl daemon-reload
 log "Installed PetCam at $APP_ROOT."
 log "Verified the Python package, CLI help, and native Live555 library."
 log "Camera detection, capture, and RTSP streaming are not tested during installation."
-log "Connect and configure a camera, then run 'petcam' to start capture and streaming."
+log "Run 'petcam' and complete camera setup once; it saves the config and enables the RTSP service at boot."
+log "After setup, 'petcam' opens the saved stream status; use 'petcam --configure' to change settings."
 log "Run 'petcam -h' for command help."
