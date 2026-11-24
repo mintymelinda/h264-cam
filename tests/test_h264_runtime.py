@@ -23,6 +23,7 @@ from petcam.infrastructure.streaming.live555 import (
     H264Publisher,
     Live555Error,
     build_capture_command,
+    load_camera_status,
 )
 
 
@@ -233,6 +234,41 @@ class NativeCaptureTests(unittest.TestCase):
                 "queued": {"7": 1, "8": 1, "5": 1, "1": 1},
             },
         )
+
+    def test_capture_reset_requires_a_new_sps_pps_idr_recovery_sequence(self):
+        class FakeServer:
+            def __init__(self):
+                self.nals = []
+            def push_nal(self, nal, is_idr=False):
+                self.nals.append((nal, is_idr))
+
+        prefix = b"\\x00\\x00\\x00\\x01"
+        sps = b"\\x67\\x42\\x00\\x1e"
+        pps = b"\\x68\\xce\\x06"
+        idr = b"\\x65\\x88"
+        delta = b"\\x41\\x9a"
+        server = FakeServer()
+        publisher = H264Publisher(server)
+
+        publisher.publish(prefix + sps)
+        publisher.publish(prefix + pps)
+        publisher.publish(prefix + idr)
+        publisher.publish(prefix + delta)
+        publisher.reset_capture()
+        before = list(server.nals)
+
+        # A delta frame from the new capture generation must not be published.
+        publisher.publish(prefix + delta)
+        self.assertEqual(server.nals, before)
+        self.assertFalse(publisher.started)
+
+        publisher.publish(prefix + sps)
+        publisher.publish(prefix + pps)
+        publisher.publish(prefix + idr)
+        self.assertEqual(server.nals[-3:], [
+            (sps, False), (pps, False), (idr, True)
+        ])
+        self.assertTrue(publisher.started)
 
     def test_publisher_rejects_idr_without_parameter_sets(self):
         class FakeServer:
